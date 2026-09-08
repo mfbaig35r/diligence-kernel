@@ -11,7 +11,7 @@ requires-python = ">=3.11"
 license = {text = "BUSL-1.1"}
 authors = [{name = "Fahad Baig", email = "mfbaig35r@gmail.com"}]
 dependencies = [
-    "mcp>=1.2.0",
+    "mcp>=2.0.0",
     "pydantic>=2.0",
     "distillcore>=0.8.1",
     "anthropic>=0.40.0",

@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - name: Set up Python
+        run: uv python install ${{ matrix.python-version }}
+      - name: Install
+        run: uv venv .venv && uv pip install --python .venv/bin/python -e ".[dev]"
+      - name: Lint
+        run: |
+          .venv/bin/ruff check src tests
+          .venv/bin/ruff format --check src tests
+      - name: Corpus check
+        run: DILIGENCE_KERNEL_CORPUS=review-table-prompts .venv/bin/python -m diligence_kernel --corpus-check
+      - name: Test
+        run: .venv/bin/python -m pytest -q

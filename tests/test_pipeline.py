@@ -164,7 +164,6 @@ def test_unit_documents_are_cached_and_reused_across_columns(loaded, dataroom):
     first_unit = filler.systems[:27]
     assert all(s == first_unit[0] for s in first_unit)
     assert first_unit[0][-1]["cache_control"] == {"type": "ephemeral"}
-    assert first_unit[0][-1] is not None
 
 
 def test_verbatim_paraphrase_is_recorded_as_a_violation(loaded, dataroom):
