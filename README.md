@@ -41,6 +41,32 @@ From `00a-build-plan-and-standards.md`, checked on every cell before it persists
 - no markdown, no citations, and no computed figures in a cell
 - Verbatim cells must reproduce text that actually appears in the review unit
 
+## Tools
+
+**Matter** — `matter_open`, `matter_status`
+**Vault** — `vault_ingest`, `vault_search`, `classification_record`
+**Rows** — `units_propose`, `units_assemble`
+**Execution** — `run_table`, `run_status`
+**Review** — `table_read`, `cell_evidence`, `cell_review`
+**Corpus** — `table_describe`, `column_prompt`, `columns_find`
+**Artifacts** — `artifact_list`, `artifact_build`
+
+## A matter, end to end
+
+```
+matter_open("Project Cedar", as_of_date="2026-09-01")   # loads 24 tables, 591 columns
+vault_ingest("/path/to/dataroom")                        # extract, chunk, offsets, embed
+units_assemble("05") ; run_table("05")                   # intake classifies and routes
+units_assemble("01") ; run_table("01")                   # a workstream table
+table_read("01", only_flagged=True)                      # what breached the standards
+cell_evidence(unit_id, "Assignment Language")            # the sentences behind a cell
+cell_review(unit_id, "...", review_status="Verified", materiality="Critical")
+artifact_build("consent_schedule")                       # a filter, not a fresh question
+```
+
+Build order is `00a` section 12: start at 05, then 06, then 01, and stop when the matter is
+covered. `table_describe` reports the pairs that must be built together.
+
 ## Install
 
 ```bash
