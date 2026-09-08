@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "diligence-kernel"
+version = "0.1.0"
+description = "Matter-scoped M&A diligence vault and review-table execution engine over MCP"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "BUSL-1.1"}
+authors = [{name = "Fahad Baig", email = "mfbaig35r@gmail.com"}]
+dependencies = [
+    "mcp>=1.2.0",
+    "pydantic>=2.0",
+    "distillcore>=0.8.1",
+    "anthropic>=0.40.0",
+]
+
+[project.optional-dependencies]
+pdf = ["distillcore[pdf]"]
+docx = ["distillcore[docx]"]
+local = ["distillcore[local]"]
+all = ["distillcore[pdf,docx,html,excel,local]"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "ruff>=0.8"]
+
+[project.scripts]
+diligence-kernel = "diligence_kernel.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/diligence_kernel"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
