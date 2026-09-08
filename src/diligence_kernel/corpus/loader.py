@@ -38,7 +38,9 @@ def compute_stages(columns: list[ColumnSpec]) -> tuple[dict[str, int], list[list
     for col in columns:
         detected, _ = resolve_at_refs(col.prompt_text, names)
         refs = {*(u.lower() for u in col.upstream), *(d.lower() for d in detected)}
-        upstream[col.name] = {by_lower[r] for r in refs if r in by_lower and by_lower[r] != col.name}
+        upstream[col.name] = {
+            by_lower[r] for r in refs if r in by_lower and by_lower[r] != col.name
+        }
 
     stages: dict[str, int] = {}
     remaining = dict(upstream)
@@ -101,10 +103,19 @@ def _insert_table(conn: sqlite3.Connection, spec: TableSpec, digest: str) -> int
             source_path, source_sha256, ingested_at)
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
-            spec.number, spec.slug, spec.title, spec.review_unit,
-            int(spec.grouping_enabled), spec.max_docs_per_unit, spec.vault_project,
-            spec.inventory_version, spec.table_instructions, spec.dependency_map,
-            spec.source_path, digest, now(),
+            spec.number,
+            spec.slug,
+            spec.title,
+            spec.review_unit,
+            int(spec.grouping_enabled),
+            spec.max_docs_per_unit,
+            spec.vault_project,
+            spec.inventory_version,
+            spec.table_instructions,
+            spec.dependency_map,
+            spec.source_path,
+            digest,
+            now(),
         ),
     )
     return int(cur.lastrowid)
@@ -115,15 +126,19 @@ def _insert_columns(
 ) -> dict[str, int]:
     stages, cycles = compute_stages(spec.columns)
     for cycle in cycles:
-        findings.append(Finding(
-            code="DEPENDENCY_CYCLE", subject_type="table", subject_id=table_id,
-            subject_name=f"Table {spec.number}",
-            observation=(
-                f"{len(cycle)} columns could not be assigned an execution stage because their "
-                "upstream references form a cycle."
-            ),
-            evidence={"columns": cycle},
-        ))
+        findings.append(
+            Finding(
+                code="DEPENDENCY_CYCLE",
+                subject_type="table",
+                subject_id=table_id,
+                subject_name=f"Table {spec.number}",
+                observation=(
+                    f"{len(cycle)} columns could not be assigned an execution stage because their "
+                    "upstream references form a cycle."
+                ),
+                evidence={"columns": cycle},
+            )
+        )
     ids: dict[str, int] = {}
     for col in spec.columns:
         cur = conn.execute(
@@ -132,11 +147,17 @@ def _insert_columns(
                 purpose, prompt_text, prompt_chars, prompt_sections, stage)
                VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                table_id, col.position, col.name, col.native_type or "Free Response",
+                table_id,
+                col.position,
+                col.name,
+                col.native_type or "Free Response",
                 col.type_caveat,
                 json.dumps(col.configured_options) if col.configured_options else None,
-                col.purpose, col.prompt_text, len(col.prompt_text),
-                json.dumps(col.prompt_sections), stages.get(col.name),
+                col.purpose,
+                col.prompt_text,
+                len(col.prompt_text),
+                json.dumps(col.prompt_sections),
+                stages.get(col.name),
             ),
         )
         ids[col.name.lower()] = int(cur.lastrowid)
@@ -164,15 +185,19 @@ def _insert_dependencies(
             continue
         resolved, unresolved = resolve_at_refs(col.prompt_text, names)
         for ref in unresolved:
-            findings.append(Finding(
-                code="AT_REF_UNRESOLVED", subject_type="column", subject_id=down_id,
-                subject_name=f"{spec.number} {col.name}",
-                observation=(
-                    f"The prompt references @{ref} but no column of that name exists "
-                    f"in Table {spec.number}."
-                ),
-                evidence={"reference": ref},
-            ))
+            findings.append(
+                Finding(
+                    code="AT_REF_UNRESOLVED",
+                    subject_type="column",
+                    subject_id=down_id,
+                    subject_name=f"{spec.number} {col.name}",
+                    observation=(
+                        f"The prompt references @{ref} but no column of that name exists "
+                        f"in Table {spec.number}."
+                    ),
+                    evidence={"reference": ref},
+                )
+            )
         declared = {u.lower() for u in col.upstream}
         detected = {r.lower() for r in resolved}
         for ref in declared | detected:

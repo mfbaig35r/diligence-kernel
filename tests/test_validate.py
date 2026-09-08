@@ -1,0 +1,126 @@
+"""00a is enforced, not requested. These are the checks that make that true."""
+
+from __future__ import annotations
+
+import pytest
+
+from diligence_kernel.engine.validate import (
+    is_fallback,
+    is_positive_null,
+    validate_cell,
+    validate_verbatim,
+)
+
+OPTIONS = ["Complete on its face", "Sequence gap", "Unable to determine"]
+
+
+def codes(*args, **kwargs) -> set[str]:
+    return {v.code for v in validate_cell(*args, **kwargs)}
+
+
+@pytest.mark.parametrize("value", ["N/A", "None", "Silent", "Unclear", "Not found"])
+def test_banned_synonyms_are_rejected(value):
+    assert "BANNED_FALLBACK" in codes(value, native_type="Free Response")
+
+
+@pytest.mark.parametrize("value", ["Not addressed", "Not applicable", "Incorporated terms"])
+def test_permitted_fallbacks_pass(value):
+    assert codes(value, native_type="Free Response") == set()
+    assert is_fallback(value)
+
+
+def test_not_stated_is_reserved_for_typed_columns():
+    assert "NOT_STATED_ON_UNTYPED_COLUMN" in codes("Not stated", native_type="Free Response")
+    assert codes("Not stated", native_type="Date") == set()
+    assert codes("Not stated", native_type="Duration") == set()
+
+
+def test_positive_null_findings_are_answers_not_absences():
+    assert is_positive_null("None identified")
+    assert not is_fallback("None identified")
+    assert codes("None identified", native_type="Free Response") == set()
+
+
+def test_classify_must_return_a_configured_option():
+    assert (
+        codes("Complete on its face", native_type="Classify", configured_options=OPTIONS) == set()
+    )
+    assert "OPTION_NOT_CONFIGURED" in codes(
+        "Looks complete", native_type="Classify", configured_options=OPTIONS
+    )
+    # A permitted fallback is always acceptable, configured or not.
+    assert "OPTION_NOT_CONFIGURED" not in codes(
+        "Not addressed", native_type="Classify", configured_options=OPTIONS
+    )
+
+
+def test_classify_must_be_one_line():
+    assert "CLASSIFY_MULTILINE" in codes(
+        "Sequence gap\nbecause amendment 2 is missing",
+        native_type="Classify",
+        configured_options=OPTIONS,
+    )
+
+
+@pytest.mark.parametrize(
+    "value,ok",
+    [
+        ("2024-08-14", True),
+        ("2024-08", True),
+        ("2024", True),
+        ("14 August 2024", False),
+        ("08/14/2024", False),
+    ],
+)
+def test_dates_are_iso_with_partial_precision_preserved(value, ok):
+    assert ("DATE_FORMAT" in codes(value, native_type="Date")) is not ok
+
+
+def test_markdown_is_not_authorised_in_a_cell():
+    assert "MARKDOWN_IN_CELL" in codes("**Acme Corp**", native_type="Free Response")
+    assert "MARKDOWN_IN_CELL" in codes("- one\n- two", native_type="Free Response")
+    # A Verbatim column reproduces source text, which may legitimately look like markup.
+    assert "MARKDOWN_IN_CELL" not in codes("- one\n- two", native_type="Verbatim")
+
+
+def test_computed_figures_are_refused():
+    assert "ARITHMETIC_IN_CELL" in codes(
+        "4,500,000 shares for a total of $9,000,000", native_type="Free Response"
+    )
+    assert codes("4,500,000 shares as stated", native_type="Free Response") == set()
+
+
+def test_citations_belong_in_evidence_not_the_cell():
+    assert "CITATION_IN_CELL" in codes("2024-08-14 per Section 4.2", native_type="Date")
+
+
+def test_empty_cell_is_a_violation():
+    assert "CELL_EMPTY" in codes("   ", native_type="Free Response")
+
+
+SOURCE = [
+    "Neither party may assign this Agreement without the prior written consent of the other party."
+]
+
+
+def test_verbatim_tolerates_wrapping_but_not_paraphrase():
+    wrapped = "Neither party may assign this Agreement\nwithout the prior written consent of the\nother party."
+    assert validate_verbatim(wrapped, SOURCE) == []
+    assert (
+        validate_verbatim("The agreement cannot be assigned.", SOURCE)[0].code
+        == "VERBATIM_NOT_IN_SOURCE"
+    )
+
+
+def test_verbatim_tolerates_smart_quotes_and_dashes():
+    source = ["The Company's obligations — including payment — survive termination."]
+    assert (
+        validate_verbatim(
+            "The Company's obligations - including payment - survive termination.", source
+        )
+        == []
+    )
+
+
+def test_verbatim_accepts_a_fallback():
+    assert validate_verbatim("Not addressed", SOURCE) == []

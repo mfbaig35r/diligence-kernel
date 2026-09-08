@@ -93,7 +93,9 @@ def page_boundaries(pages: Iterable[Any]) -> list[tuple[int, int, int]]:
     return out
 
 
-def pages_for_span(bounds: list[tuple[int, int, int]], start: int, end: int) -> tuple[int | None, int | None]:
+def pages_for_span(
+    bounds: list[tuple[int, int, int]], start: int, end: int
+) -> tuple[int | None, int | None]:
     hits = [num for num, s, e in bounds if start < e and end > s]
     return (min(hits), max(hits)) if hits else (None, None)
 
@@ -127,7 +129,12 @@ def ingest_path(
         existing = conn.execute(
             "SELECT id, sha256, extract_status FROM document WHERE source_path = ?", (str(path),)
         ).fetchone()
-        if existing and existing["sha256"] == digest and existing["extract_status"] == "extracted" and not force:
+        if (
+            existing
+            and existing["sha256"] == digest
+            and existing["extract_status"] == "extracted"
+            and not force
+        ):
             counts["unchanged"] += 1
             continue
         if existing:
@@ -144,12 +151,16 @@ def ingest_path(
                 (str(path), path.name, digest, path.stat().st_size, str(exc)[:500], now()),
             )
             hint = OPTIONAL.get(suffix)
-            findings.append(Finding(
-                code="EXTRACT_FAILED", subject_type="document", subject_id=None,
-                subject_name=path.name,
-                observation=f"The file could not be extracted: {exc}",
-                evidence={"path": str(path)} | ({"install": hint} if hint else {}),
-            ))
+            findings.append(
+                Finding(
+                    code="EXTRACT_FAILED",
+                    subject_type="document",
+                    subject_id=None,
+                    subject_name=path.name,
+                    observation=f"The file could not be extracted: {exc}",
+                    evidence={"path": str(path)} | ({"install": hint} if hint else {}),
+                )
+            )
             continue
 
         full_text = result.full_text or ""
@@ -158,24 +169,38 @@ def ingest_path(
                (source_path, filename, sha256, bytes, page_count, full_text,
                 extract_status, ingested_at)
                VALUES (?,?,?,?,?,?, 'extracted', ?)""",
-            (str(path), path.name, digest, path.stat().st_size,
-             result.page_count, full_text, now()),
+            (
+                str(path),
+                path.name,
+                digest,
+                path.stat().st_size,
+                result.page_count,
+                full_text,
+                now(),
+            ),
         )
         doc_id = int(cur.lastrowid)
         counts["ingested"] += 1
 
         if not full_text.strip():
-            findings.append(Finding(
-                code="DOCUMENT_EMPTY", subject_type="document", subject_id=doc_id,
-                subject_name=path.name,
-                observation="The file extracted to no text; it may be a scan needing OCR.",
-                evidence={"path": str(path), "page_count": result.page_count},
-            ))
+            findings.append(
+                Finding(
+                    code="DOCUMENT_EMPTY",
+                    subject_type="document",
+                    subject_id=doc_id,
+                    subject_name=path.name,
+                    observation="The file extracted to no text; it may be a scan needing OCR.",
+                    evidence={"path": str(path), "page_count": result.page_count},
+                )
+            )
             continue
 
         pieces = dc_chunk(
-            full_text, strategy="paragraph", target_tokens=target_tokens,
-            max_tokens=max_tokens, overlap_tokens=overlap_tokens,
+            full_text,
+            strategy="paragraph",
+            target_tokens=target_tokens,
+            max_tokens=max_tokens,
+            overlap_tokens=overlap_tokens,
         )
         spans = locate_chunks(full_text, pieces)
         bounds = page_boundaries(result.pages or [])
@@ -184,12 +209,16 @@ def ingest_path(
             try:
                 vectors = embedder(pieces)
             except Exception as exc:
-                findings.append(Finding(
-                    code="EMBEDDING_FAILED", subject_type="document", subject_id=doc_id,
-                    subject_name=path.name,
-                    observation=f"Chunks were stored without embeddings: {exc}",
-                    evidence={"path": str(path)},
-                ))
+                findings.append(
+                    Finding(
+                        code="EMBEDDING_FAILED",
+                        subject_type="document",
+                        subject_id=doc_id,
+                        subject_name=path.name,
+                        observation=f"Chunks were stored without embeddings: {exc}",
+                        evidence={"path": str(path)},
+                    )
+                )
 
         for i, (piece, (start, end)) in enumerate(zip(pieces, spans, strict=False)):
             p_start, p_end = pages_for_span(bounds, start, end)
@@ -199,9 +228,18 @@ def ingest_path(
                    (document_id, chunk_index, text, char_start, char_end, page_start, page_end,
                     token_estimate, embedding, embedding_dim)
                    VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                (doc_id, i, piece, start, end, p_start, p_end,
-                 max(1, len(piece) // 4),
-                 pack_embedding(vec) if vec else None, len(vec) if vec else None),
+                (
+                    doc_id,
+                    i,
+                    piece,
+                    start,
+                    end,
+                    p_start,
+                    p_end,
+                    max(1, len(piece) // 4),
+                    pack_embedding(vec) if vec else None,
+                    len(vec) if vec else None,
+                ),
             )
         counts["chunks"] += len(pieces)
 

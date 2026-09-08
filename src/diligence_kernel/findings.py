@@ -10,7 +10,9 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-SubjectType = str  # matter | corpus | table | column | prompt | document | unit | cell | run | artifact
+SubjectType = (
+    str  # matter | corpus | table | column | prompt | document | unit | cell | run | artifact
+)
 
 
 @dataclass(slots=True)

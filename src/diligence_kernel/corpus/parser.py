@@ -116,7 +116,7 @@ def _sections(lines: list[str], mask: list[bool], level: int) -> list[tuple[str,
         if m and len(m.group(1)) == level:
             marks.append((m.group(2), i))
     out: list[tuple[str, int, int]] = []
-    for idx, (text, start) in enumerate(marks):
+    for text, start in marks:
         # a section ends at the next heading of this level or shallower, outside fences
         end = len(lines)
         for j in range(start + 1, len(lines)):
@@ -235,8 +235,14 @@ def parse_inventory(path: Path) -> tuple[TableSpec, list[Finding]]:
         raise ValueError(f"unrecognised inventory filename: {path.name}")
     number, slug = fm.group("prefix"), fm.group("slug")
 
-    h1 = next((m.group(2) for i, ln in enumerate(lines) if not mask[i]
-               and (m := HEADING_RE.match(ln)) and len(m.group(1)) == 1), path.stem)
+    h1 = next(
+        (
+            m.group(2)
+            for i, ln in enumerate(lines)
+            if not mask[i] and (m := HEADING_RE.match(ln)) and len(m.group(1)) == 1
+        ),
+        path.stem,
+    )
     title = re.sub(r"^Prompt Inventory\s*[—–-]\s*", "", h1).strip()
 
     spec = TableSpec(number=number, slug=slug, title=title, source_path=str(path))
@@ -252,7 +258,7 @@ def parse_inventory(path: Path) -> tuple[TableSpec, list[Finding]]:
                 spec.review_unit = _clean_inline(v)
             elif k == "grouping used":
                 spec.grouping_enabled = v.lower().lstrip("*").startswith("yes")
-                if (dm := re.search(r"up to (\d+) documents", v)):
+                if dm := re.search(r"up to (\d+) documents", v):
                     spec.max_docs_per_unit = int(dm.group(1))
             elif k == "project":
                 spec.vault_project = _clean_inline(v)
@@ -277,7 +283,7 @@ def parse_inventory(path: Path) -> tuple[TableSpec, list[Finding]]:
         for i in range(s, e):
             if mask[i]:
                 continue
-            if (tm := re.match(r"^-\s*\[[ xX]\]\s*(.+?)\s*$", lines[i])):
+            if tm := re.match(r"^-\s*\[[ xX]\]\s*(.+?)\s*$", lines[i]):
                 spec.test_set.append(_clean_inline(tm.group(1)))
 
     # --- ## Human-review fields -----------------------------------------------------
@@ -324,7 +330,7 @@ def _parse_column_records(
     for i in range(start, end):
         if mask[i]:
             continue
-        if (m := COLUMN_RECORD_RE.match(lines[i])):
+        if m := COLUMN_RECORD_RE.match(lines[i]):
             marks.append((int(m.group(1)), m.group(2).strip(), i))
 
     columns: list[ColumnSpec] = []
@@ -354,34 +360,52 @@ def _parse_column_records(
         col.at_refs = _at_refs(col.prompt_text)
 
         if not col.prompt_text:
-            findings.append(Finding(
-                code="PROMPT_MISSING", subject_type="column", subject_id=None,
-                subject_name=f"{table_number}.{pos} {col.name}",
-                observation="The column record has no fenced prompt block.",
-                evidence={"source": source, "line": line_no + 1},
-            ))
+            findings.append(
+                Finding(
+                    code="PROMPT_MISSING",
+                    subject_type="column",
+                    subject_id=None,
+                    subject_name=f"{table_number}.{pos} {col.name}",
+                    observation="The column record has no fenced prompt block.",
+                    evidence={"source": source, "line": line_no + 1},
+                )
+            )
         if col.native_type is None:
-            findings.append(Finding(
-                code="NATIVE_TYPE_MISSING", subject_type="column", subject_id=None,
-                subject_name=f"{table_number}.{pos} {col.name}",
-                observation="The column record states no native type.",
-                evidence={"source": source, "line": line_no + 1},
-            ))
+            findings.append(
+                Finding(
+                    code="NATIVE_TYPE_MISSING",
+                    subject_type="column",
+                    subject_id=None,
+                    subject_name=f"{table_number}.{pos} {col.name}",
+                    observation="The column record states no native type.",
+                    evidence={"source": source, "line": line_no + 1},
+                )
+            )
         elif col.native_type == "Classify" and not col.configured_options:
-            findings.append(Finding(
-                code="CLASSIFY_OPTIONS_ABSENT", subject_type="column", subject_id=None,
-                subject_name=f"{table_number}.{pos} {col.name}",
-                observation="A Classify column lists no configured options in its record.",
-                evidence={"source": source, "line": line_no + 1,
-                          "prompt_sections": col.prompt_sections},
-            ))
+            findings.append(
+                Finding(
+                    code="CLASSIFY_OPTIONS_ABSENT",
+                    subject_type="column",
+                    subject_id=None,
+                    subject_name=f"{table_number}.{pos} {col.name}",
+                    observation="A Classify column lists no configured options in its record.",
+                    evidence={
+                        "source": source,
+                        "line": line_no + 1,
+                        "prompt_sections": col.prompt_sections,
+                    },
+                )
+            )
         columns.append(col)
     return columns, findings
 
 
 def _prompt_sections(prompt: str) -> list[str]:
-    return [m.group(2).strip() for ln in prompt.splitlines()
-            if (m := HEADING_RE.match(ln)) and len(m.group(1)) == 2]
+    return [
+        m.group(2).strip()
+        for ln in prompt.splitlines()
+        if (m := HEADING_RE.match(ln)) and len(m.group(1)) == 2
+    ]
 
 
 def _at_refs(prompt: str) -> list[str]:
@@ -412,7 +436,7 @@ def resolve_at_refs(prompt: str, column_names: list[str]) -> tuple[list[str], li
         if hit is not None:
             resolved.setdefault(hit, None)
             continue
-        if (rm := AT_REF_RE.match(prompt[m.start() :])):
+        if rm := AT_REF_RE.match(prompt[m.start() :]):
             unresolved.setdefault(rm.group(1).strip().rstrip(".,;:"), None)
     return list(resolved), list(unresolved)
 
@@ -429,19 +453,27 @@ def _cross_check(spec: TableSpec) -> list[Finding]:
     indexed = {index_name(r) for r in spec.index_rows if index_name(r)}
     recorded = {c.name for c in spec.columns}
     for name in sorted(indexed - recorded):
-        findings.append(Finding(
-            code="INDEX_COLUMN_WITHOUT_RECORD", subject_type="table", subject_id=None,
-            subject_name=f"Table {spec.number}",
-            observation=f"The column index lists {name!r} but no column record defines it.",
-            evidence={"column": name},
-        ))
+        findings.append(
+            Finding(
+                code="INDEX_COLUMN_WITHOUT_RECORD",
+                subject_type="table",
+                subject_id=None,
+                subject_name=f"Table {spec.number}",
+                observation=f"The column index lists {name!r} but no column record defines it.",
+                evidence={"column": name},
+            )
+        )
     for name in sorted(recorded - indexed):
-        findings.append(Finding(
-            code="RECORD_COLUMN_WITHOUT_INDEX", subject_type="table", subject_id=None,
-            subject_name=f"Table {spec.number}",
-            observation=f"A column record defines {name!r} but the column index omits it.",
-            evidence={"column": name},
-        ))
+        findings.append(
+            Finding(
+                code="RECORD_COLUMN_WITHOUT_INDEX",
+                subject_type="table",
+                subject_id=None,
+                subject_name=f"Table {spec.number}",
+                observation=f"A column record defines {name!r} but the column index omits it.",
+                evidence={"column": name},
+            )
+        )
 
     by_name = {c.name: c for c in spec.columns}
     for row in spec.index_rows:
@@ -452,15 +484,19 @@ def _cross_check(spec: TableSpec) -> list[Finding]:
         idx_raw, _ = _split_type_caveat(_clean_inline(row.get("native type", "")))
         idx_type = NATIVE_TYPE_ALIASES.get(idx_raw.lower(), idx_raw)
         if idx_type and col.native_type and idx_type != col.native_type:
-            findings.append(Finding(
-                code="NATIVE_TYPE_DISAGREES", subject_type="column", subject_id=None,
-                subject_name=f"{spec.number} {name}",
-                observation=(
-                    f"The column index calls {name!r} {idx_type} and its record calls it "
-                    f"{col.native_type}."
-                ),
-                evidence={"index": idx_type, "record": col.native_type},
-            ))
+            findings.append(
+                Finding(
+                    code="NATIVE_TYPE_DISAGREES",
+                    subject_type="column",
+                    subject_id=None,
+                    subject_name=f"{spec.number} {name}",
+                    observation=(
+                        f"The column index calls {name!r} {idx_type} and its record calls it "
+                        f"{col.native_type}."
+                    ),
+                    evidence={"index": idx_type, "record": col.native_type},
+                )
+            )
     return findings
 
 
@@ -474,12 +510,16 @@ def parse_corpus(root: Path) -> tuple[list[TableSpec], list[Finding]]:
         try:
             spec, fs = parse_inventory(path)
         except Exception as exc:  # a file we cannot parse is a finding, not a crash
-            findings.append(Finding(
-                code="INVENTORY_UNPARSED", subject_type="corpus", subject_id=None,
-                subject_name=path.name,
-                observation=f"The inventory could not be parsed: {exc}",
-                evidence={"source": str(path)},
-            ))
+            findings.append(
+                Finding(
+                    code="INVENTORY_UNPARSED",
+                    subject_type="corpus",
+                    subject_id=None,
+                    subject_name=path.name,
+                    observation=f"The inventory could not be parsed: {exc}",
+                    evidence={"source": str(path)},
+                )
+            )
             continue
         specs.append(spec)
         findings.extend(fs)

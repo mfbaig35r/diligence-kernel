@@ -1,0 +1,14 @@
+SUPPLY AGREEMENT
+
+This Supply Agreement is made as of August 1, 2023 between Acme Manufacturing LLC
+("Buyer") and Cedar Components GmbH, a German limited liability company ("Seller").
+
+TERM. This Agreement continues until terminated by either party on 30 days notice.
+
+GOVERNING LAW. This Agreement is governed by the laws of the State of Delaware.
+
+CHANGE OF CONTROL. Upon a change of control of Buyer, Seller may terminate this Agreement
+on thirty (30) days written notice. "Change of control" means the acquisition of more than
+fifty percent (50%) of the voting securities of a party, whether directly or indirectly.
+
+This Agreement has not been signed by either party.

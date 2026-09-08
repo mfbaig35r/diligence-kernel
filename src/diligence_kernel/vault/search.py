@@ -23,8 +23,46 @@ from .ingest import unpack_embedding
 
 FTS_SAFE_RE = re.compile(r"[^\w\s]+")
 STOPWORDS = frozenset(
-    "the a an and or of to in for on with is are be as by at from that this it its "
-    "any all each every not no if then than which who whom whose what when where".split()
+    [
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "of",
+        "to",
+        "in",
+        "for",
+        "on",
+        "with",
+        "is",
+        "are",
+        "be",
+        "as",
+        "by",
+        "at",
+        "from",
+        "that",
+        "this",
+        "it",
+        "its",
+        "any",
+        "all",
+        "each",
+        "every",
+        "not",
+        "no",
+        "if",
+        "then",
+        "than",
+        "which",
+        "who",
+        "whom",
+        "whose",
+        "what",
+        "when",
+        "where",
+    ]
 )
 
 
@@ -124,7 +162,9 @@ def search_unit(
             f"SELECT id, embedding FROM chunk WHERE document_id IN ({placeholders}) AND embedding IS NOT NULL",
             doc_ids,
         ):
-            scored.append((_cosine(query_vector, unpack_embedding(row["embedding"])), int(row["id"])))
+            scored.append(
+                (_cosine(query_vector, unpack_embedding(row["embedding"])), int(row["id"]))
+            )
         scored.sort(reverse=True)
         for rank, (_, cid) in enumerate(scored[: limit * 4]):
             vector_rank[cid] = rank
@@ -166,7 +206,9 @@ def unit_passages(conn: sqlite3.Connection, unit_id: int, *, limit: int = 12) ->
     return [_row_to_passage(r, 0.0) for r in rows]
 
 
-def unit_full_text(conn: sqlite3.Connection, unit_id: int, *, max_chars: int = 400_000) -> list[dict[str, object]]:
+def unit_full_text(
+    conn: sqlite3.Connection, unit_id: int, *, max_chars: int = 400_000
+) -> list[dict[str, object]]:
     """Every document in the unit, whole, in date order where a date is known.
 
     This is the Verbatim path and the small-unit path. Truncation is reported rather than
@@ -190,14 +232,16 @@ def unit_full_text(conn: sqlite3.Connection, unit_id: int, *, max_chars: int = 4
         if truncated:
             text = text[: max(0, budget)]
         budget -= len(text)
-        out.append({
-            "document_id": int(row["id"]),
-            "filename": row["filename"],
-            "role": row["role"],
-            "document_date": row["document_date"] or None,
-            "text": text,
-            "truncated": truncated,
-        })
+        out.append(
+            {
+                "document_id": int(row["id"]),
+                "filename": row["filename"],
+                "role": row["role"],
+                "document_date": row["document_date"] or None,
+                "text": text,
+                "truncated": truncated,
+            }
+        )
         if budget <= 0:
             break
     return out
