@@ -14,6 +14,7 @@ from .db import now
 from .derive import artifacts as artifacts_mod
 from .engine.runner import RunScope, create_run, execute_run
 from .findings import Finding, KernelError, dump
+from .vault import classify as classify_mod
 from .vault import search as search_mod
 from .vault import units as units_mod
 from .vault.ingest import ingest_path
@@ -286,6 +287,10 @@ def run_table(
     chosen = model or os.environ.get("DILIGENCE_KERNEL_MODEL", DEFAULT_MODEL)
     run_id = create_run(conn, table, scope, model=chosen)
     summary, findings = execute_run(conn, run_id, filler=filler)
+    if table == classify_mod.INTAKE_TABLE and summary["status"] == "complete":
+        counts, projected = classify_mod.project_intake(conn, run_id=run_id)
+        summary = {**summary, **counts}
+        findings.extend(projected)
     return result(findings, **summary)
 
 

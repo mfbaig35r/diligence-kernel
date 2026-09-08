@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from ..constants import WORKSTREAM_TABLES
 from ..db import now
 from ..findings import Finding
+from .classify import INTAKE_TABLE
 
 NOISE_RE = re.compile(r"[^a-z0-9]+")
 
@@ -108,6 +109,17 @@ def documents_in_scope(conn: sqlite3.Connection, table_number: str) -> list[sqli
     A document is in scope when its workstream (or secondary workstream) maps to a set of
     tables containing this one, and its routing disposition has not excluded it.
     """
+    if table_number == INTAKE_TABLE:
+        # 00a: intake "runs over everything". Its scope cannot depend on the classification
+        # it is the thing that produces.
+        return conn.execute(
+            """SELECT d.id, d.filename, d.sha256, NULL AS workstream,
+                      NULL AS secondary_workstream, NULL AS document_type, NULL AS subject_entity,
+                      NULL AS counterparty, NULL AS document_date, NULL AS amends_or_issued_under,
+                      NULL AS routing_disposition, NULL AS document_role
+               FROM document d WHERE d.extract_status = 'extracted' ORDER BY d.filename"""
+        ).fetchall()
+
     rows = conn.execute(
         """SELECT d.id, d.filename, d.sha256, c.workstream, c.secondary_workstream, c.document_type,
                   c.subject_entity, c.counterparty, c.document_date, c.amends_or_issued_under,
