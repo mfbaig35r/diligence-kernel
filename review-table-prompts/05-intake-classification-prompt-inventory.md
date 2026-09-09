@@ -161,7 +161,7 @@ Stage 4 — Triage and coverage
 | 1 | Document Role | Classify | — | Operative Date | v1.0 | draft |
 | 2 | Workstream | Classify | — | Document Type; Secondary Workstream | v1.0 | draft |
 | 3 | Document Type | Free Response | @Workstream | Subject Entity; Counterparty; Document Date; Amends or Issued Under; Routing Disposition; Referenced but Not Produced; Duplicate Indicators | v1.0 | draft |
-| 4 | Secondary Workstream | Classify | @Workstream | — | v1.0 | draft |
+| 4 | Secondary Workstream | Classify | @Workstream | — | v1.1 | draft |
 | 5 | Subject Entity | Free Response | @Document Type | — | v1.0 | draft |
 | 6 | Counterparty | Free Response | @Document Type | Counterparty Type | v1.0 | draft |
 | 7 | Counterparty Type | Classify | @Counterparty | — | v1.0 | draft |
@@ -372,7 +372,7 @@ Return the exact vocabulary value and nothing else, or `Unclassified — [descri
 ### 4. Secondary Workstream
 
 - Native type: Classify
-- Configured options, in UI order: the same 18 workstream values, plus `None`, plus `Unable to determine`
+- Configured options, in UI order: `Corporate and Entity Structure`, `Capitalization and Securities`, `Commercial Contracts`, `Vendor and Supplier`, `IP and Technology`, `Privacy and Cybersecurity`, `Employment and HR`, `Benefits and Pensions`, `Real Estate`, `Environmental`, `Litigation and Disputes`, `Regulatory and Licenses`, `Compliance`, `Tax`, `Insurance`, `Debt and Financing`, `Related-Party`, `Deal Documents`, `None`, `Unable to determine`
 - Upstream: `@Workstream`
 - Downstream: none
 - Purpose: identify a genuinely dual document, which under one-project-per-workstream
@@ -1254,3 +1254,4 @@ rather than retaining `Lease`. Set `Compilation Flag` to
 | Date | Column | From → To | Change | Failure class | Rerun scope | Regressions |
 |---|---|---|---|---|---|---|
 | | | v1.0 | Initial draft | — | — | — |
+| 2026-09-08 | Secondary Workstream | v1.0 → v1.1 | Enumerated the configured options in full. The bullet previously read "the same 18 workstream values, plus `None`, plus `Unable to determine`", which names a vocabulary without spelling it out. Any reader taking it literally — including a parser — sees two options, and a run then presents that truncated list to the model as the complete set. Observed: the column returned `None` on 9 of 10 documents on two different models, because it could not return anything else. | Truncated controlled vocabulary | Secondary Workstream on every row of Table 05; nothing downstream, the column has no dependents | None; no prompt text changed |

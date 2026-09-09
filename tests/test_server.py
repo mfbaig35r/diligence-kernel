@@ -25,7 +25,7 @@ def test_matter_open_loads_the_corpus(wired):
     assert out["matter"] == "Project Cedar"
     assert out["corpus_load"]["tables"] == 24
     assert out["corpus_load"]["columns"] == 591
-    assert [f["code"] for f in out["findings"]] == ["OPTIONS_NOT_ENUMERATED"]
+    assert out["finding_count"] == 0
 
 
 def test_matter_open_refuses_a_second_matter_in_one_file(wired):

@@ -142,19 +142,13 @@ def test_a_configured_option_is_not_flagged_on_the_cell(loaded):
     assert [v.code for v in violations] == ["BANNED_FALLBACK"]
 
 
-def test_a_truncated_option_list_is_not_enforced_as_a_vocabulary(loaded):
-    """An incomplete list must not be presented to the model, nor validated against."""
-    row = loaded.execute(
-        """SELECT configured_options, options_note FROM column_def cd
-           JOIN review_table t ON t.id = cd.table_id
-           WHERE t.number = '05' AND cd.name = 'Secondary Workstream'"""
-    ).fetchone()
-    assert row["options_note"], "the column records that its list is incomplete"
+def test_a_truncated_option_list_is_not_enforced_as_a_vocabulary():
+    """Where the parser could not read the whole list, it is not a vocabulary to enforce.
 
-    # With the list suppressed, a real workstream is accepted rather than rejected as
-    # off-vocabulary — the column's whole purpose is to name one.
+    Asserting a partial list rejects correct answers: `Employment and HR` was off-vocabulary
+    against the two options a truncated Secondary Workstream bullet produced.
+    """
     assert validate_cell("Employment and HR", native_type="Classify", configured_options=[]) == []
-    # Asserting the truncated list would have rejected it.
     violations = validate_cell(
         "Employment and HR",
         native_type="Classify",

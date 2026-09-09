@@ -16,32 +16,42 @@ EXPECTED_TABLES = 24
 EXPECTED_COLUMNS = 591
 
 
-def test_the_corpus_parses_with_only_the_one_known_defect(corpus_root):
+def test_every_inventory_parses_without_a_finding(corpus_root):
     specs, findings = parse_corpus(corpus_root)
     tables = [s for s in specs if s.is_table]
     assert len(tables) == EXPECTED_TABLES
     assert sum(len(s.columns) for s in tables) == EXPECTED_COLUMNS
-    assert [f.code for f in findings] == ["OPTIONS_NOT_ENUMERATED"], [
-        f.observation for f in findings
-    ]
+    assert findings == [], [f.observation for f in findings]
 
 
-def test_an_options_bullet_that_names_a_vocabulary_it_does_not_spell_out(corpus_root):
-    """The bug this caught: `the same 18 workstream values` parsed as two options.
+def test_an_options_bullet_that_names_a_vocabulary_it_does_not_spell_out():
+    """The guard against the bug this found, kept after the corpus was corrected.
 
-    The truncated list went to the model as the complete vocabulary, so it returned `None` on
-    nine of ten documents — not a model failure, a silently under-read controlled list.
+    `Configured options: the same 18 workstream values, plus `None`` parsed as two options.
+    The truncated list reached the model as the complete vocabulary, so it returned `None` on
+    nine of ten documents on two different models — not a model failure, a silently under-read
+    controlled list. The parser must never return a partial list as though it were whole.
     """
-    specs, findings = parse_corpus(corpus_root)
-    finding = next(f for f in findings if f.code == "OPTIONS_NOT_ENUMERATED")
-    assert finding.subject_name == "05.4 Secondary Workstream"
-    assert finding.evidence["parsed"] == ["None", "Unable to determine"]
-    assert "18 workstream values" in finding.evidence["bullet"]
+    from diligence_kernel.corpus.parser import _options_prose
 
-    column = next(
-        c for s in specs if s.number == "05" for c in s.columns if c.name == "Secondary Workstream"
-    )
-    assert column.options_note, "the column knows its own list is incomplete"
+    assert _options_prose("the same 18 workstream values, plus `None`, plus `Unable to determine`")
+    assert _options_prose("`Complete on its face`, plus whatever Corporate uses")
+    # A bullet whose whole content is backticked values, with ordinary connecting words.
+    assert _options_prose("`Yes`, `No`, and `Unable to determine`") is None
+    assert _options_prose("in UI order: `Yes`, `No`") is None
+
+
+def test_secondary_workstream_now_carries_its_whole_vocabulary(corpus_root):
+    """Corrected 2026-09-08: the bullet was enumerated and the column versioned to v1.1."""
+    specs, _ = parse_corpus(corpus_root)
+    by_name = {c.name: c for s in specs if s.number == "05" for c in s.columns}
+    secondary, workstream = by_name["Secondary Workstream"], by_name["Workstream"]
+    assert secondary.options_note is None, "nothing is left unspelled"
+    assert len(secondary.configured_options) == 20
+    assert secondary.configured_options == workstream.configured_options[:18] + [
+        "None",
+        "Unable to determine",
+    ]
 
 
 def test_a_fully_backticked_options_bullet_carries_no_note(corpus_root):
@@ -140,7 +150,7 @@ def test_load_is_idempotent_and_no_table_has_a_cycle(conn, corpus_root):
     counts, findings = load_corpus(conn, corpus_root)
     assert counts["tables"] == EXPECTED_TABLES
     assert counts["columns"] == EXPECTED_COLUMNS
-    assert [f.code for f in findings] == ["OPTIONS_NOT_ENUMERATED"]
+    assert findings == []
 
     again, _ = load_corpus(conn, corpus_root)
     assert again["tables"] == 0 and again["skipped"] == EXPECTED_TABLES
