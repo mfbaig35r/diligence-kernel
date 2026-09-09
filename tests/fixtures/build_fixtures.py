@@ -208,26 +208,78 @@ def build_lease(path: Path) -> None:
     doc.build(flow)
 
 
+#: The text rendered into the scan fixture as an image. OCR must recover it; nothing can
+#: extract it, because there is no text layer.
+SCAN_TEXT = [
+    "EXHIBIT A",
+    "MEMORANDUM OF LEASE",
+    "",
+    "THIS MEMORANDUM OF LEASE is made as of May 14, 2021, by and",
+    "between HALSTEAD PROPERTY HOLDINGS LLC, a Delaware limited",
+    "liability company, as Landlord, and ACME MANUFACTURING LLC, a",
+    "Delaware limited liability company, as Tenant.",
+    "",
+    "1. Premises. The premises consist of approximately 24,500 rentable",
+    "square feet located at 1400 Halstead Avenue, Wilmington, Delaware.",
+    "",
+    "2. Term. The term commences June 1, 2021 and expires May 31, 2031.",
+    "",
+    "3. Purpose. This Memorandum is recorded solely to give notice of the",
+    "Lease and shall not modify its terms in any respect.",
+    "",
+    "RECORDED: New Castle County Recorder of Deeds",
+    "Instrument No. 2021-0041882",
+]
+
+#: A clause a Verbatim column would be asked to reproduce from the scan.
+SCAN_VERBATIM = (
+    "This Memorandum is recorded solely to give notice of the "
+    "Lease and shall not modify its terms in any respect."
+)
+
+
 def build_scan(path: Path) -> None:
-    """A PDF with no text layer, as a scanned exhibit would be."""
+    """A PDF whose only content is an image of text, as a recorded exhibit would be.
+
+    Nothing extracts from it: there is no text layer. OCR has to read the picture, which is
+    the point — the fixture exercises a real transcription, not an empty page.
+    """
+    from PIL import Image, ImageDraw, ImageFont
     from reportlab.lib.pagesizes import LETTER
-    from reportlab.lib.units import inch
     from reportlab.pdfgen import canvas as pdfcanvas
 
+    scale = 3  # render large, then let the PDF scale it down: roughly 200 dpi of detail
+    width, height = 612 * scale, 792 * scale
+    image = Image.new("L", (width, height), 255)
+    draw = ImageDraw.Draw(image)
+
+    font = None
+    for candidate in (
+        "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+    ):
+        if Path(candidate).exists():
+            font = ImageFont.truetype(candidate, 13 * scale)
+            break
+    if font is None:  # pragma: no cover - only on a host with none of these fonts
+        font = ImageFont.load_default()
+
+    y = 90 * scale
+    for line in SCAN_TEXT:
+        draw.text((80 * scale, y), line, fill=30, font=font)
+        y += 22 * scale
+
+    # A little grey, as a photocopy has: realistic, but not enough to defeat OCR.
+    image = image.point(lambda v: min(255, int(v * 0.94 + 12)))
+
+    png = path.with_suffix(".png")
+    image.save(png, "PNG")
     c = pdfcanvas.Canvas(str(path), pagesize=LETTER)
-    # Grey blocks standing in for scanned lines. No text is drawn, so nothing extracts.
-    c.setFillGray(0.75)
-    for i in range(24):
-        c.rect(
-            inch,
-            LETTER[1] - 1.5 * inch - i * 0.28 * inch,
-            (LETTER[0] - 2 * inch) * (0.95 if i % 5 else 0.55),
-            8,
-            stroke=0,
-            fill=1,
-        )
+    c.drawImage(str(png), 0, 0, width=LETTER[0], height=LETTER[1])
     c.showPage()
     c.save()
+    png.unlink()
 
 
 def build_amendment(path: Path) -> None:

@@ -72,6 +72,27 @@ class CellAnswer(BaseModel):
     )
 
 
+#: Added to the prefix only when a document in the unit was read by OCR.
+TRANSCRIPTION_CAVEAT = """
+One or more documents below carry `source="ocr"`: their text is a machine transcription of a
+scanned page, not the document's own text layer. Read it as printed and quote it as it
+appears. Do not correct, complete, or guess at a word the transcription garbled — where it is
+unreadable, treat the point as `Unable to determine`.
+"""
+
+
+def _document_tag(d: dict[str, object]) -> str:
+    source = d.get("text_source") or "extracted"
+    attrs = [f"title={d.get('filename')!r}", f"role={d.get('role') or 'unstated'!r}"]
+    if source == "ocr":
+        confidence = d.get("ocr_confidence")
+        shown = f", {float(confidence):.0%} confidence" if confidence is not None else ""
+        attrs.append(f'source="ocr ({d.get("ocr_engine")}{shown})"')
+    if d.get("truncated"):
+        attrs.append("truncated=true")
+    return f"<document {' '.join(attrs)}>\n{d.get('text', '')}\n</document>"
+
+
 @dataclass(slots=True)
 class CellRequest:
     column_name: str
@@ -110,12 +131,10 @@ class CellFiller:
         cache_key: str | None = None,
     ) -> PromptPrefix:
         """The cached prefix: the contract, the table's instructions, and the unit."""
-        documents = "\n\n".join(
-            f"<document title={d.get('filename')!r} role={d.get('role') or 'unstated'!r}"
-            f"{' truncated=true' if d.get('truncated') else ''}>\n{d.get('text', '')}\n</document>"
-            for d in evidence_blocks
-        )
+        documents = "\n\n".join(_document_tag(d) for d in evidence_blocks)
         text = CELL_CONTRACT
+        if any(d.get("text_source") == "ocr" for d in evidence_blocks):
+            text += TRANSCRIPTION_CAVEAT
         if table_instructions:
             text += "\n\n## Table Instructions\n\n" + table_instructions
         text += f"\n\n## Review unit: {unit_label}\n\n{documents}"

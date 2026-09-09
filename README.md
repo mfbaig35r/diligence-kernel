@@ -78,12 +78,35 @@ text files. Three things happen on the way in that matter more than they sound:
   `Page 1 of 3` and `Page 2 of 3` count as the same line.
 - **Offsets survive.** The full text is rebuilt from the cleaned pages, so every chunk's
   character span and page range is exact, and evidence can point at it.
-- **Scans report themselves.** A PDF with no text layer ingests, raises `DOCUMENT_EMPTY`, and
-  is skipped by any run — never answered from an empty page. There is no OCR path yet.
+- **Scans are read by OCR.** A PDF page with no text layer is transcribed locally with
+  tesseract, so nothing leaves the machine. Set `DILIGENCE_KERNEL_OCR` to `tesseract`
+  (default), `vision`, or `off`. Without OCR available, the file still ingests and reports
+  itself rather than disappearing.
 
 The Verbatim check tolerates what extraction does to text — ligatures, soft hyphens,
 hyphenated line breaks, wrapping, smart quotes, dashes, non-breaking spaces — while still
 rejecting paraphrase.
+
+### OCR text is a transcription, not the document
+
+A document read by OCR records that fact, its engine and its confidence, and the whole
+system stays honest about it:
+
+- the model is told which documents are transcriptions, and not to correct a garbled word
+- `cell_evidence` reports the source of every quotation it shows a reviewer
+- a **Verbatim** cell drawn from a transcribed unit is flagged `VERBATIM_FROM_OCR`, because
+  matching a quotation against OCR output compares one reading with another and cannot show
+  the words are the document's
+
+`tesseract` is the default rather than `vision` for a specific reason: tesseract garbles,
+which is visible, while a vision model transcribes fluently, so its misreadings look like
+ordinary text. On a control that a partner will rely on, a legible failure beats a
+plausible one.
+
+```bash
+brew install tesseract poppler          # macOS
+uv pip install -e ".[ocr]"
+```
 
 ## Providers
 

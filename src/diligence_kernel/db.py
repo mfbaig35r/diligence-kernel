@@ -265,6 +265,17 @@ CREATE TABLE cell_history (
 );
 """,
     ),
+    (
+        2,
+        """
+-- Where a document's text came from. OCR text is a transcription, not the document, so
+-- every cell drawn from it inherits that caveat and says so.
+ALTER TABLE document ADD COLUMN text_source TEXT NOT NULL DEFAULT 'extracted';
+ALTER TABLE document ADD COLUMN ocr_engine TEXT;
+ALTER TABLE document ADD COLUMN ocr_confidence REAL;
+CREATE INDEX idx_document_text_source ON document(text_source);
+""",
+    ),
 ]
 
 

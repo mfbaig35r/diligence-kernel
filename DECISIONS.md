@@ -80,6 +80,28 @@ deliberate loosening. The check exists to catch paraphrase, and paraphrase diffe
 not by punctuation — the tests assert that three plausible paraphrases of the fixture lease's
 assignment clause are still rejected.
 
+## 3c. OCR is local by default, and its output is marked as a transcription
+
+A real data room is full of recorded deeds and scanned exhibits with no text layer. Without
+OCR they are invisible to every table, which is worse than reading them imperfectly.
+
+**Tesseract is the default, not a vision model.** Both misread; they misread differently.
+Tesseract garbles, which a reviewer sees. A vision model transcribes fluently, so a
+misreading arrives as ordinary plausible text. When the output feeds a control a partner
+relies on, a legible failure beats a convincing one — and tesseract is free, offline, and
+keeps client documents on the machine. `vision` remains available for scans tesseract cannot
+read, opted into deliberately.
+
+**The output is marked, everywhere it travels.** `document.text_source` records `ocr` with
+the engine and confidence; the prompt prefix tags such documents `source="ocr (...)"` and
+tells the model not to correct a garbled word; `cell_evidence` reports the source of each
+quotation; and a Verbatim cell in a transcribed unit is flagged `VERBATIM_FROM_OCR`.
+
+That last one is the point. `validate_verbatim` compares the model's quotation with the text
+in the vault. When that text is itself a transcription, a match compares one reading against
+another — it still catches paraphrase, but it cannot show the words are the document's. A
+check that silently proves less than it appears to is how a control becomes theatre.
+
 ## 4. The standards are enforced, not requested
 
 A prompt instruction is a request. `engine/validate.py` turns `00a` into checks that run
@@ -124,10 +146,12 @@ where their answers live, and a run never overwrites a verified, corrected, or l
   fixture agreements is ~$0.0023 a cell on `gpt-5`. Real diligence documents are ten to
   fifty times larger, and the prefix is the bulk of a request, so a real matter scales up
   from that number rather than matching it.
-- **Scanned documents have no OCR path.** A PDF with no text layer ingests, reports
-  `DOCUMENT_EMPTY`, and is skipped by any run rather than answered from an empty page — but
-  it is invisible to every table until someone OCRs it. In a real data room that is routinely
-  a tenth of the files.
+- **OCR quality is only known on a clean fixture.** The scan fixture transcribes at 95%
+  confidence because it is rendered text, lightly greyed. Real recorded documents are skewed,
+  stamped, annotated and photocopied; expect materially lower confidence and check what
+  `OCR_LOW_CONFIDENCE` actually catches before trusting the threshold.
+- **The vision OCR path is unexercised.** It is written against the Responses API image
+  input but has never run, for the same reason the rest of the live path has not.
 - **Table 05's document-type vocabulary is ~180 values.** `00a` section 8 flags this as
   deciding whether the column is Classify or Free Response. The corpus currently calls it
   Free Response, so the engine does not constrain it.

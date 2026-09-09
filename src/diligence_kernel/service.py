@@ -145,14 +145,19 @@ def matter_status(conn: sqlite3.Connection) -> dict[str, Any]:
 
 
 def vault_ingest(
-    conn: sqlite3.Connection, path: str, *, recursive: bool = True, force: bool = False
+    conn: sqlite3.Connection,
+    path: str,
+    *,
+    recursive: bool = True,
+    force: bool = False,
+    ocr: str | None = None,
 ) -> dict[str, Any]:
     root = Path(path).expanduser()
     if not root.exists():
         raise KernelError(f"{root} does not exist.")
     if not root.is_dir():
         raise KernelError(f"{root} is not a directory; point vault_ingest at the data room.")
-    counts, findings = ingest_path(conn, root, recursive=recursive, force=force)
+    counts, findings = ingest_path(conn, root, recursive=recursive, force=force, ocr=ocr)
     return result(findings, path=str(root), **counts)
 
 
@@ -543,7 +548,8 @@ def cell_evidence(conn: sqlite3.Connection, unit_id: int, column: str) -> dict[s
     if row is None:
         raise KernelError(f"No cell for column {column!r} in unit {unit_id}.")
     evidence = conn.execute(
-        """SELECT e.quote, e.char_start, e.char_end, d.filename
+        """SELECT e.quote, e.char_start, e.char_end, d.filename,
+                  d.text_source, d.ocr_engine, d.ocr_confidence
            FROM cell_evidence e JOIN document d ON d.id = e.document_id
            WHERE e.cell_id = ? ORDER BY e.rank""",
         (int(row["id"]),),
@@ -559,6 +565,9 @@ def cell_evidence(conn: sqlite3.Connection, unit_id: int, column: str) -> dict[s
                 "quote": e["quote"],
                 "char_start": e["char_start"],
                 "char_end": e["char_end"],
+                "text_source": e["text_source"] or "extracted",
+                "ocr_engine": e["ocr_engine"],
+                "ocr_confidence": e["ocr_confidence"],
             }
             for e in evidence
         ],

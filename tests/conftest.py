@@ -25,6 +25,20 @@ UNREADABLE = "cedar-point-exhibit-a-scan.pdf"
 READABLE = tuple(d for d in DOCUMENTS if d != UNREADABLE)
 
 
+@pytest.fixture(autouse=True)
+def _ocr_off(monkeypatch):
+    """OCR is slow and is exercised deliberately, not incidentally on every ingest.
+
+    Tests that need it opt in with the `ocr_on` fixture.
+    """
+    monkeypatch.setenv("DILIGENCE_KERNEL_OCR", "off")
+
+
+@pytest.fixture
+def ocr_on(monkeypatch):
+    monkeypatch.setenv("DILIGENCE_KERNEL_OCR", "tesseract")
+
+
 @pytest.fixture
 def conn(tmp_path) -> sqlite3.Connection:
     return db.connect(tmp_path / "matter.db")

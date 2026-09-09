@@ -26,7 +26,7 @@ from ..findings import Finding, KernelError
 from ..vault import search
 from .llm import CellFiller, CellRequest
 from .providers import Usage
-from .validate import validate_cell, validate_verbatim
+from .validate import validate_cell, validate_provenance, validate_verbatim
 
 #: A unit whose documents fit in this many characters goes into the cached prefix whole.
 #: Above it, the engine retrieves per column instead and gives up the cache benefit.
@@ -131,6 +131,14 @@ def execute_run(
         for unit in units:
             unit_id = int(unit["id"])
             blocks, whole = _unit_context(conn, unit_id)
+            ocr_documents = {
+                int(r["id"]): "ocr"
+                for r in conn.execute(
+                    """SELECT d.id FROM unit_document ud JOIN document d ON d.id = ud.document_id
+                       WHERE ud.unit_id = ? AND d.text_source = 'ocr'""",
+                    (unit_id,),
+                )
+            }
             if not blocks:
                 findings.append(
                     Finding(
@@ -152,6 +160,7 @@ def execute_run(
                 cache_key=f"{table['number']}:{unit_id}",
             )
             sources = [str(b.get("text", "")) for b in blocks]
+            unit_has_ocr = any(b.get("text_source") == "ocr" for b in blocks)
 
             for column in columns:
                 done += 1
@@ -189,7 +198,13 @@ def execute_run(
                         conn, unit_id, column["prompt_text"], limit=RETRIEVAL_LIMIT
                     )
                     retrieved = [
-                        {"filename": p.filename, "role": None, "text": p.text, "truncated": False}
+                        {
+                            "filename": p.filename,
+                            "role": None,
+                            "text": p.text,
+                            "truncated": False,
+                            "text_source": ocr_documents.get(p.document_id, "extracted"),
+                        }
                         for p in passages
                     ]
                     per_column_system = filler.build_system(
@@ -237,6 +252,7 @@ def execute_run(
                 )
                 if column["native_type"] in SPAN_EXACT_TYPES:
                     violations += validate_verbatim(answer.value, per_column_sources)
+                violations += validate_provenance(column["native_type"], unit_has_ocr=unit_has_ocr)
 
                 _persist_cell(
                     conn,

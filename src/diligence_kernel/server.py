@@ -122,13 +122,23 @@ def vault_ingest(
     force: Annotated[
         bool, Field(description="Re-extract files whose content is unchanged.")
     ] = False,
+    ocr: Annotated[
+        str | None,
+        Field(description="auto (default, local tesseract) | tesseract | vision | off."),
+    ] = None,
 ) -> dict[str, Any]:
     """Extract, chunk, and store every supported file under a directory.
 
-    Idempotent by content hash: an unchanged file is skipped. Reports files that could not be
-    extracted and files that extracted to no text, which usually means a scan needing OCR.
+    Idempotent by content hash: an unchanged file is skipped. A PDF page with no text layer
+    is a scan, and is read by OCR — locally with tesseract by default, so nothing leaves the
+    machine. A document read that way records that its text is a transcription rather than
+    the document's own, reports the engine and its confidence, and any Verbatim cell drawn
+    from it is flagged: the quotation was checked against a reading of the page, not the page.
+
+    `vision` sends page images to the model instead. It reads harder scans, but it
+    transcribes fluently, so a misreading looks like ordinary text — opt in deliberately.
     """
-    return service.vault_ingest(get_conn(), path, recursive=recursive, force=force)
+    return service.vault_ingest(get_conn(), path, recursive=recursive, force=force, ocr=ocr)
 
 
 @mcp.tool()

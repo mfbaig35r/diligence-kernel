@@ -79,8 +79,8 @@ def test_ingest_extracts_and_chunks(loaded, dataroom):
     assert counts["ingested"] == len(DOCUMENTS)
     assert counts["failed"] == 0
     assert counts["chunks"] > 0
-    # The only finding is the scan with no text layer, which reports itself.
-    assert [f.code for f in findings] == ["DOCUMENT_EMPTY"]
+    # With OCR off, the scan reports both that it could not be read and why.
+    assert [f.code for f in findings] == ["OCR_UNAVAILABLE", "DOCUMENT_EMPTY"]
 
     # Re-ingesting an unchanged data room is a no-op.
     again, _ = ingest_path(loaded, dataroom)

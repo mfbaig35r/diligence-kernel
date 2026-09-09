@@ -18,6 +18,7 @@ from pathlib import Path
 
 from ..db import now
 from ..findings import Finding
+from . import ocr as ocr_mod
 from .cleaning import strip_running_lines
 
 #: Extensions distillcore can extract without optional extras installed.
@@ -112,6 +113,7 @@ def ingest_path(
     max_tokens: int = 1000,
     overlap_tokens: int = 50,
     force: bool = False,
+    ocr: str | None = None,
 ) -> tuple[dict[str, int], list[Finding]]:
     """Ingest every supported file under `root` into the vault."""
     from distillcore import chunk as dc_chunk
@@ -124,6 +126,7 @@ def ingest_path(
         "unsupported": 0,
         "chunks": 0,
         "header_lines_removed": 0,
+        "ocred": 0,
     }
     findings: list[Finding] = []
 
@@ -174,14 +177,62 @@ def ingest_path(
 
         # Remove running headers and footers before anything reads the text. They land
         # mid-sentence at every page break, and everything downstream suffers for it.
-        cleaned = strip_running_lines([p.text for p in (result.pages or [])])
+        page_texts = [p.text for p in (result.pages or [])]
+
+        # A page with no text layer is a scan. OCR reads it, and the document records that
+        # its text is a transcription rather than the document's own.
+        text_source, engine_name, confidence = "extracted", None, None
+        needs = ocr_mod.pages_needing_ocr(page_texts) if suffix == ".pdf" else []
+        if needs:
+            engine, why = ocr_mod.select_engine(ocr)
+            if engine is None:
+                findings.append(
+                    Finding(
+                        code="OCR_UNAVAILABLE",
+                        subject_type="document",
+                        subject_id=None,
+                        subject_name=path.name,
+                        observation=(
+                            f"{len(needs)} of {len(page_texts) or 1} pages have no text layer and "
+                            f"could not be read: {why}."
+                        ),
+                        evidence={"path": str(path), "pages": needs},
+                    )
+                )
+            else:
+                transcribed = engine.transcribe(path, needs, dpi=ocr_mod.configured_dpi())
+                if transcribed.usable:
+                    by_page = {p.page_number: p.text for p in transcribed.pages}
+                    page_texts = [
+                        by_page.get(n, t) for n, t in enumerate(page_texts or [""], start=1)
+                    ] or [transcribed.text]
+                    text_source = "ocr"
+                    engine_name = transcribed.engine
+                    confidence = transcribed.confidence
+                    counts["ocred"] += 1
+                else:
+                    findings.append(
+                        Finding(
+                            code="OCR_FAILED",
+                            subject_type="document",
+                            subject_id=None,
+                            subject_name=path.name,
+                            observation=(
+                                "OCR produced no usable text"
+                                + (f": {transcribed.error}" if transcribed.error else ".")
+                            ),
+                            evidence={"path": str(path), "engine": transcribed.engine},
+                        )
+                    )
+
+        cleaned = strip_running_lines(page_texts)
         full_text = cleaned.full_text if cleaned.pages else (result.full_text or "")
         counts["header_lines_removed"] += cleaned.lines_removed
         cur = conn.execute(
             """INSERT INTO document
                (source_path, filename, sha256, bytes, page_count, full_text,
-                extract_status, ingested_at)
-               VALUES (?,?,?,?,?,?, 'extracted', ?)""",
+                extract_status, text_source, ocr_engine, ocr_confidence, ingested_at)
+               VALUES (?,?,?,?,?,?, 'extracted', ?,?,?,?)""",
             (
                 str(path),
                 path.name,
@@ -189,11 +240,46 @@ def ingest_path(
                 path.stat().st_size,
                 result.page_count,
                 full_text,
+                text_source,
+                engine_name,
+                confidence,
                 now(),
             ),
         )
         doc_id = int(cur.lastrowid)
         counts["ingested"] += 1
+
+        if text_source == "ocr":
+            shown = "unreported" if confidence is None else f"{confidence:.0%}"
+            findings.append(
+                Finding(
+                    code="DOCUMENT_OCRED",
+                    subject_type="document",
+                    subject_id=doc_id,
+                    subject_name=path.name,
+                    observation=(
+                        f"{len(needs)} pages had no text layer and were transcribed by "
+                        f"{engine_name} at {shown} mean confidence; the text is a reading of "
+                        "the document, not the document."
+                    ),
+                    evidence={"engine": engine_name, "confidence": confidence, "pages": needs},
+                )
+            )
+            if confidence is not None and confidence < ocr_mod.LOW_CONFIDENCE:
+                findings.append(
+                    Finding(
+                        code="OCR_LOW_CONFIDENCE",
+                        subject_type="document",
+                        subject_id=doc_id,
+                        subject_name=path.name,
+                        observation=(
+                            f"The transcription averaged {confidence:.0%} confidence, below "
+                            f"the {ocr_mod.LOW_CONFIDENCE:.0%} threshold; treat every cell "
+                            "drawn from it as unverified."
+                        ),
+                        evidence={"engine": engine_name, "confidence": confidence},
+                    )
+                )
 
         if not full_text.strip():
             findings.append(
@@ -202,7 +288,7 @@ def ingest_path(
                     subject_type="document",
                     subject_id=doc_id,
                     subject_name=path.name,
-                    observation="The file extracted to no text; it may be a scan needing OCR.",
+                    observation="The file yielded no text and no table can see it.",
                     evidence={"path": str(path), "page_count": result.page_count},
                 )
             )

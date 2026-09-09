@@ -216,6 +216,7 @@ def unit_full_text(
     """
     rows = conn.execute(
         """SELECT d.id, d.filename, d.full_text, d.page_count,
+                  d.text_source, d.ocr_engine, d.ocr_confidence,
                   COALESCE(cl.document_date, '') AS document_date, ud.role
            FROM unit_document ud
            JOIN document d ON d.id = ud.document_id

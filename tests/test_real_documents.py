@@ -47,13 +47,14 @@ def test_pdf_docx_and_text_all_extract(vault):
 
 
 def test_a_scan_reports_itself_rather_than_vanishing(loaded, dataroom):
+    """With OCR off, an unreadable file says so instead of disappearing."""
     _, findings = ingest_path(loaded, dataroom)
-    scan = [f for f in findings if f.subject_name == SCAN]
-    assert len(scan) == 1
-    assert scan[0].code == "DOCUMENT_EMPTY"
-    assert "OCR" in scan[0].observation
+    codes = [f.code for f in findings if f.subject_name == SCAN]
+    assert codes == ["OCR_UNAVAILABLE", "DOCUMENT_EMPTY"]
     # It is still in the vault, so it can be counted as produced but unreadable.
     assert _full_text(loaded, SCAN) == ""
+    row = loaded.execute("SELECT text_source FROM document WHERE filename = ?", (SCAN,)).fetchone()
+    assert row["text_source"] == "extracted"
 
 
 def test_chunk_offsets_round_trip_through_pdf_extraction(vault):
@@ -206,3 +207,108 @@ def test_a_textless_unit_is_reported_not_answered_from_nothing(vault):
     assert [f.code for f in findings] == ["UNIT_HAS_NO_TEXT"]
     cells = vault.execute("SELECT COUNT(*) AS n FROM cell").fetchone()["n"]
     assert cells == 0
+
+
+# --- OCR ------------------------------------------------------------------------------------
+
+
+def test_ocr_reads_a_scan_that_has_no_text_layer(loaded, dataroom, ocr_on):
+    """The fixture is an image of text: nothing extracts, so OCR has to do the reading."""
+    from .fixtures.build_fixtures import SCAN_TEXT
+
+    counts, findings = ingest_path(loaded, dataroom)
+    assert counts["ocred"] == 1
+
+    text = _full_text(loaded, SCAN)
+    assert "MEMORANDUM OF LEASE" in text
+    assert "HALSTEAD PROPERTY HOLDINGS LLC" in text
+    # Most of the authored lines come back; OCR is not required to be perfect.
+    recovered = sum(1 for line in SCAN_TEXT if line.strip() and line in text)
+    assert recovered >= len([x for x in SCAN_TEXT if x.strip()]) * 0.7
+
+    codes = {f.code for f in findings if f.subject_name == SCAN}
+    assert "DOCUMENT_OCRED" in codes
+    assert "DOCUMENT_EMPTY" not in codes
+
+
+def test_an_ocred_document_records_that_its_text_is_a_transcription(loaded, dataroom, ocr_on):
+    ingest_path(loaded, dataroom)
+    row = loaded.execute(
+        "SELECT text_source, ocr_engine, ocr_confidence FROM document WHERE filename = ?",
+        (SCAN,),
+    ).fetchone()
+    assert row["text_source"] == "ocr"
+    assert row["ocr_engine"] == "tesseract"
+    assert 0.0 < row["ocr_confidence"] <= 1.0
+
+    # Documents with a text layer are untouched by any of this.
+    lease = loaded.execute(
+        "SELECT text_source, ocr_engine FROM document WHERE filename = ?", (LEASE,)
+    ).fetchone()
+    assert lease["text_source"] == "extracted"
+    assert lease["ocr_engine"] is None
+
+
+def test_ocred_text_is_chunked_and_searchable(loaded, dataroom, ocr_on):
+    ingest_path(loaded, dataroom)
+    rows = loaded.execute(
+        """SELECT c.text, c.char_start, c.char_end, d.full_text
+           FROM chunk c JOIN document d ON d.id = c.document_id WHERE d.filename = ?""",
+        (SCAN,),
+    ).fetchall()
+    assert rows, "the transcription is chunked like any other text"
+    for row in rows:
+        assert row["full_text"][row["char_start"] : row["char_end"]].strip() == row["text"].strip()
+
+
+def test_a_verbatim_cell_says_it_was_checked_against_a_transcription():
+    """The circularity that matters: OCR text is a reading, so a match proves less."""
+    from diligence_kernel.engine.validate import validate_provenance
+
+    assert validate_provenance("Verbatim", unit_has_ocr=False) == []
+    assert validate_provenance("Free Response", unit_has_ocr=True) == []
+
+    violations = validate_provenance("Verbatim", unit_has_ocr=True)
+    assert [v.code for v in violations] == ["VERBATIM_FROM_OCR"]
+    assert "not the document" in violations[0].detail
+
+
+def test_the_model_is_told_which_documents_are_transcriptions(loaded, dataroom, ocr_on):
+    from diligence_kernel.engine.llm import TRANSCRIPTION_CAVEAT
+
+    from .stub import StubFiller
+
+    ingest_path(loaded, dataroom)
+    filler = StubFiller()
+    blocks = [
+        {
+            "filename": SCAN,
+            "role": None,
+            "text": "EXHIBIT A",
+            "text_source": "ocr",
+            "ocr_engine": "tesseract",
+            "ocr_confidence": 0.95,
+        },
+    ]
+    prefix = filler.build_system(table_instructions="", unit_label="u", evidence_blocks=blocks)
+    assert 'source="ocr (tesseract, 95% confidence)"' in prefix.text
+    assert TRANSCRIPTION_CAVEAT.strip() in prefix.text
+
+    # A unit of ordinary documents carries no caveat and no source attribute.
+    clean = filler.build_system(
+        table_instructions="",
+        unit_label="u",
+        evidence_blocks=[
+            {"filename": LEASE, "role": "Base", "text": "x", "text_source": "extracted"}
+        ],
+    )
+    assert "source=" not in clean.text
+    assert TRANSCRIPTION_CAVEAT.strip() not in clean.text
+
+
+def test_ocr_can_be_turned_off(loaded, dataroom, monkeypatch):
+    monkeypatch.setenv("DILIGENCE_KERNEL_OCR", "off")
+    counts, findings = ingest_path(loaded, dataroom)
+    assert counts["ocred"] == 0
+    unavailable = [f for f in findings if f.code == "OCR_UNAVAILABLE"]
+    assert unavailable and "off" in unavailable[0].observation

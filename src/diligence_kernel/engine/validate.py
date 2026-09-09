@@ -20,6 +20,7 @@ from ..constants import (
     FALLBACK_VOCABULARY,
     NOT_STATED_TYPES,
     POSITIVE_NULL_FINDINGS,
+    SPAN_EXACT_TYPES,
 )
 
 DATE_RE = re.compile(r"^\d{4}(-\d{2}(-\d{2})?)?$")
@@ -178,6 +179,26 @@ def validate_verbatim(value: str, sources: list[str]) -> list[Violation]:
 #: A hyphen at a line break, which a PDF inserts to justify a paragraph.
 _HYPHEN_BREAK = re.compile(r"[-\u2010\u2011]\s*\n\s*")
 _SOFT_HYPHEN = "\u00ad"
+
+
+def validate_provenance(native_type: str, *, unit_has_ocr: bool) -> list[Violation]:
+    """Flag a Verbatim cell whose review unit contains transcribed text.
+
+    `validate_verbatim` compares the model's quotation against the text in the vault. When
+    that text is OCR output, the comparison is one reading against another and cannot show
+    the words are the document's. The check still catches paraphrase, so it stays — but the
+    cell says what it was checked against, because a reviewer spot-checking a Verbatim cell
+    needs to know to open the page rather than trust the match.
+    """
+    if native_type in SPAN_EXACT_TYPES and unit_has_ocr:
+        return [
+            Violation(
+                "VERBATIM_FROM_OCR",
+                "The quotation was checked against an OCR transcription, not the document; "
+                "confirm it against the page before relying on the words.",
+            )
+        ]
+    return []
 
 
 def _collapse(s: str) -> str:

@@ -21,9 +21,10 @@ dependencies = [
 [project.optional-dependencies]
 local = ["distillcore[local]"]
 anthropic = ["anthropic>=0.40.0"]
-fixtures = ["reportlab>=4.0", "python-docx>=1.0"]
-dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "ruff>=0.8"]
-all = ["diligence-kernel[local,anthropic,fixtures]"]
+ocr = ["pytesseract>=0.3.10", "pdf2image>=1.17", "Pillow>=10.0"]
+fixtures = ["reportlab>=4.0", "python-docx>=1.0", "Pillow>=10.0"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "ruff>=0.8", "diligence-kernel[ocr]"]
+all = ["diligence-kernel[ocr,local,anthropic,fixtures]"]
 
 [project.scripts]
 diligence-kernel = "diligence_kernel.server:main"
