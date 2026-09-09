@@ -67,6 +67,24 @@ artifact_build("consent_schedule")                       # a filter, not a fresh
 Build order is `00a` section 12: start at 05, then 06, then 01, and stop when the matter is
 covered. `table_describe` reports the pairs that must be built together.
 
+## Real documents
+
+PDF, DOCX, XLSX and HTML extraction is installed by default — a data room is not a folder of
+text files. Three things happen on the way in that matter more than they sound:
+
+- **Running headers and footers are stripped.** An extractor emits them in reading order, so
+  a clause spanning a page break arrives with `Confidential Page 1 of 3` inside the sentence.
+  Lines repeating at the top or bottom of most pages are removed, with page numbers masked so
+  `Page 1 of 3` and `Page 2 of 3` count as the same line.
+- **Offsets survive.** The full text is rebuilt from the cleaned pages, so every chunk's
+  character span and page range is exact, and evidence can point at it.
+- **Scans report themselves.** A PDF with no text layer ingests, raises `DOCUMENT_EMPTY`, and
+  is skipped by any run — never answered from an empty page. There is no OCR path yet.
+
+The Verbatim check tolerates what extraction does to text — ligatures, soft hyphens,
+hyphenated line breaks, wrapping, smart quotes, dashes, non-breaking spaces — while still
+rejecting paraphrase.
+
 ## Providers
 
 OpenAI by default; Anthropic behind the same interface. Both make the identical call — a

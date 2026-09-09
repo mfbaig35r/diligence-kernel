@@ -13,18 +13,17 @@ authors = [{name = "Fahad Baig", email = "mfbaig35r@gmail.com"}]
 dependencies = [
     "mcp>=2.0.0",
     "pydantic>=2.0",
-    "distillcore>=0.8.1",
+    "distillcore[docx,excel,html,pdf]>=0.8.1",
     "openai>=1.60.0",
     "tiktoken>=0.7.0",
 ]
 
 [project.optional-dependencies]
-pdf = ["distillcore[pdf]"]
-docx = ["distillcore[docx]"]
 local = ["distillcore[local]"]
 anthropic = ["anthropic>=0.40.0"]
-all = ["distillcore[pdf,docx,html,excel,local]"]
+fixtures = ["reportlab>=4.0", "python-docx>=1.0"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "ruff>=0.8"]
+all = ["diligence-kernel[local,anthropic,fixtures]"]
 
 [project.scripts]
 diligence-kernel = "diligence_kernel.server:main"

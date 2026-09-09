@@ -15,10 +15,10 @@ import sqlite3
 import struct
 from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
-from typing import Any
 
 from ..db import now
 from ..findings import Finding
+from .cleaning import strip_running_lines
 
 #: Extensions distillcore can extract without optional extras installed.
 ALWAYS_AVAILABLE = {".txt", ".md", ".csv", ".json"}
@@ -81,15 +81,17 @@ def locate_chunks(full_text: str, chunks: list[str]) -> list[tuple[int, int]]:
     return spans
 
 
-def page_boundaries(pages: Iterable[Any]) -> list[tuple[int, int, int]]:
-    """(page_number, char_start, char_end) for each page, as distillcore joins them."""
+def page_boundaries_from_text(pages: Iterable[str]) -> list[tuple[int, int, int]]:
+    """(page_number, char_start, char_end) for pages joined by a blank line.
+
+    The full text is rebuilt from these same strings, so the offsets are exact by
+    construction rather than by agreement with the extractor.
+    """
     out: list[tuple[int, int, int]] = []
     cursor = 0
-    for page in pages:
-        text = getattr(page, "text", "") or ""
-        number = getattr(page, "page_number", len(out) + 1)
+    for number, text in enumerate(pages, start=1):
         out.append((number, cursor, cursor + len(text)))
-        cursor += len(text) + 2  # distillcore joins pages with a blank line
+        cursor += len(text) + 2  # pages are joined with "\n\n"
     return out
 
 
@@ -115,7 +117,14 @@ def ingest_path(
     from distillcore import chunk as dc_chunk
     from distillcore.extractors import extract as dc_extract
 
-    counts = {"ingested": 0, "unchanged": 0, "failed": 0, "unsupported": 0, "chunks": 0}
+    counts = {
+        "ingested": 0,
+        "unchanged": 0,
+        "failed": 0,
+        "unsupported": 0,
+        "chunks": 0,
+        "header_lines_removed": 0,
+    }
     findings: list[Finding] = []
 
     paths = sorted(p for p in (root.rglob("*") if recursive else root.glob("*")) if p.is_file())
@@ -163,7 +172,11 @@ def ingest_path(
             )
             continue
 
-        full_text = result.full_text or ""
+        # Remove running headers and footers before anything reads the text. They land
+        # mid-sentence at every page break, and everything downstream suffers for it.
+        cleaned = strip_running_lines([p.text for p in (result.pages or [])])
+        full_text = cleaned.full_text if cleaned.pages else (result.full_text or "")
+        counts["header_lines_removed"] += cleaned.lines_removed
         cur = conn.execute(
             """INSERT INTO document
                (source_path, filename, sha256, bytes, page_count, full_text,
@@ -203,7 +216,7 @@ def ingest_path(
             overlap_tokens=overlap_tokens,
         )
         spans = locate_chunks(full_text, pieces)
-        bounds = page_boundaries(result.pages or [])
+        bounds = page_boundaries_from_text(cleaned.pages)
         vectors: list[list[float]] = []
         if embedder is not None and pieces:
             try:

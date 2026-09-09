@@ -11,6 +11,7 @@ Every function here is pure: text in, violation codes out. No database, no model
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 
 from ..constants import (
@@ -174,9 +175,32 @@ def validate_verbatim(value: str, sources: list[str]) -> list[Violation]:
     ]
 
 
+#: A hyphen at a line break, which a PDF inserts to justify a paragraph.
+_HYPHEN_BREAK = re.compile(r"[-\u2010\u2011]\s*\n\s*")
+_SOFT_HYPHEN = "\u00ad"
+
+
 def _collapse(s: str) -> str:
-    """Whitespace- and quote-insensitive comparison, so line wrapping is not a mismatch."""
-    s = s.replace("’", "'").replace("‘", "'")
-    s = s.replace("“", '"').replace("”", '"')
-    s = s.replace("‐", "-").replace("‑", "-").replace("–", "-").replace("—", "-")
+    """The comparison form for verbatim text.
+
+    A correct quotation and its source differ in ways that carry no meaning once a PDF has
+    been through an extractor. Each of these was observed on a real extraction:
+
+    - **ligatures** — `oﬃce` for `office`; NFKC decomposes them
+    - **soft hyphens** — invisible U+00AD inside a word
+    - **hyphenated line breaks** — `non-\nexclusive` for `non-exclusive`
+    - **line wrapping** — a newline mid-sentence
+    - **smart quotes and dashes** — curly quotes, en and em dashes
+    - **non-breaking spaces** — NFKC folds them to a space
+
+    Hyphens are dropped entirely, so `non-compete` and `noncompete` compare equal. That is a
+    deliberate loosening: this check exists to catch paraphrase, and paraphrase differs by
+    words, not by punctuation.
+    """
+    s = unicodedata.normalize("NFKC", s)
+    s = s.replace(_SOFT_HYPHEN, "")
+    s = _HYPHEN_BREAK.sub("", s)
+    s = s.replace("\u2019", "'").replace("\u2018", "'")
+    s = s.replace("\u201c", '"').replace("\u201d", '"')
+    s = re.sub(r"[\u2010-\u2015-]", "", s)
     return re.sub(r"\s+", " ", s).strip().lower()

@@ -9,6 +9,7 @@ from diligence_kernel.engine.runner import RunScope, create_run, execute_run
 from diligence_kernel.vault.ingest import ingest_path
 from diligence_kernel.vault.units import assemble_units
 
+from .conftest import DOCUMENTS
 from .stub import StubFiller
 
 # What Table 05 would have produced for the fixture data room. Classification is stubbed
@@ -75,14 +76,15 @@ def _classify(conn):
 
 def test_ingest_extracts_and_chunks(loaded, dataroom):
     counts, findings = ingest_path(loaded, dataroom)
-    assert counts["ingested"] == 3
+    assert counts["ingested"] == len(DOCUMENTS)
     assert counts["failed"] == 0
     assert counts["chunks"] > 0
-    assert findings == []
+    # The only finding is the scan with no text layer, which reports itself.
+    assert [f.code for f in findings] == ["DOCUMENT_EMPTY"]
 
     # Re-ingesting an unchanged data room is a no-op.
     again, _ = ingest_path(loaded, dataroom)
-    assert again["ingested"] == 0 and again["unchanged"] == 3
+    assert again["ingested"] == 0 and again["unchanged"] == len(DOCUMENTS)
 
 
 def test_chunk_offsets_point_at_real_text(loaded, dataroom):

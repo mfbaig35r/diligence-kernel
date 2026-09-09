@@ -54,6 +54,32 @@ unit falls back to per-column retrieval. `validate_verbatim` then confirms the r
 actually appears in the unit's documents, tolerating line wrapping, smart quotes, and dash
 variants but not paraphrase.
 
+## 3a. Running headers and footers are removed before anything reads the text
+
+Every legal PDF carries them, and an extractor emits them in reading order — so a clause
+spanning a page break comes out with `Confidential Page 1 of 3` wedged into the middle of a
+sentence. Observed on the fixture lease, not imagined.
+
+That breaks three things at once: the Verbatim check rejects a correct quotation, retrieval
+scores a passage on boilerplate, and the model reads an interrupted sentence. `vault/cleaning.py`
+drops lines that repeat at the top or bottom of most pages, comparing them with digits
+masked so `Page 1 of 3` matches `Page 2 of 3`. A one-page document is left untouched,
+because nothing can be shown to repeat.
+
+The full text is then rebuilt from the cleaned pages, so character offsets and page
+attribution are exact by construction rather than by agreement with the extractor.
+
+## 3b. The Verbatim comparison form absorbs extraction artefacts, not paraphrase
+
+Each of these was observed on a real PDF extraction and each rejected a correct quotation
+before it was handled: ligatures (`oﬃce`), soft hyphens, hyphenated line breaks
+(`non-\nexclusive`), line wrapping, smart quotes, en and em dashes, non-breaking spaces.
+
+Hyphens are dropped entirely, so `non-compete` and `noncompete` compare equal. That is a
+deliberate loosening. The check exists to catch paraphrase, and paraphrase differs by words,
+not by punctuation — the tests assert that three plausible paraphrases of the fixture lease's
+assignment clause are still rejected.
+
 ## 4. The standards are enforced, not requested
 
 A prompt instruction is a request. `engine/validate.py` turns `00a` into checks that run
@@ -98,6 +124,10 @@ where their answers live, and a run never overwrites a verified, corrected, or l
   fixture agreements is ~$0.0023 a cell on `gpt-5`. Real diligence documents are ten to
   fifty times larger, and the prefix is the bulk of a request, so a real matter scales up
   from that number rather than matching it.
+- **Scanned documents have no OCR path.** A PDF with no text layer ingests, reports
+  `DOCUMENT_EMPTY`, and is skipped by any run rather than answered from an empty page — but
+  it is invisible to every table until someone OCRs it. In a real data room that is routinely
+  a tenth of the files.
 - **Table 05's document-type vocabulary is ~180 values.** `00a` section 8 flags this as
   deciding whether the column is Classify or Free Response. The corpus currently calls it
   Free Response, so the engine does not constrain it.

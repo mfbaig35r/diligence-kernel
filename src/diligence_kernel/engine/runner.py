@@ -354,7 +354,14 @@ def _unit_context(conn: sqlite3.Connection, unit_id: int) -> tuple[list[dict[str
     The boolean says whether the whole unit is present, which decides whether per-column
     retrieval is needed.
     """
-    blocks = search.unit_full_text(conn, unit_id, max_chars=WHOLE_UNIT_CHAR_BUDGET)
+    blocks = [
+        b
+        for b in search.unit_full_text(conn, unit_id, max_chars=WHOLE_UNIT_CHAR_BUDGET)
+        if str(b.get("text", "")).strip()
+    ]
+    # A document that extracted to nothing — a scan without OCR — contributes no evidence.
+    # Dropping it here is what makes the caller report the unit rather than ask the model to
+    # answer from an empty page.
     size = sum(len(str(b.get("text", ""))) for b in blocks)
     whole = (
         bool(blocks)
