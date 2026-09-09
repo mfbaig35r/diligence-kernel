@@ -24,6 +24,45 @@ answers as established results; filling out of order would feed a prompt an empt
 Stage is computed from the union of each column's declared `Upstream` and the `@Column`
 references detected in its prompt text.
 
+## 1a. The markdown is the source of truth; prompt-graph holds the history
+
+Both stores now hold the same 591 prompts, so the moment either is edited they can diverge.
+The markdown wins, because it is what git tracks, what a partner redlines, and what `00a`
+section 11 calls "the history and the reasons".
+
+That makes the direction of travel one-way: a prompt is edited in `review-table-prompts/`,
+and `scripts/sync_prompt_graph.py` replays it into prompt-graph, where `table_ingest`
+versions it — unchanged prompts left alone, changed ones given a new minor version, a missing
+column reported rather than retired. Re-syncing unchanged markdown reports 591 unchanged and
+writes nothing, which is what makes the arrangement safe.
+
+`column_revise` therefore becomes a recording step after a markdown edit, not the place edits
+originate. The cost is losing draft-then-propagate inside prompt-graph; the gain is one
+reviewable file per table and no silent divergence.
+
+**The sync calls `prompt_graph.service.table_ingest` directly.** That is the same function the
+MCP tool of that name calls, so it runs the identical lint, `@ref` resolution and versioning.
+MCP servers cannot call each other, but nothing prevents calling another project's library —
+and passing 1.19M characters through a conversation instead would risk transcription drift for
+no gain.
+
+## 1b. Corpus linting belongs to prompt-graph, cell validation to the kernel
+
+The kernel briefly had its own `corpus/lint.py`. It was a strict subset of prompt-graph's
+`prompt_check`, and keeping two linters guarantees they drift, so it is gone. On the same
+corpus prompt-graph reports 270 per-prompt findings against that lint's 37, including two
+categories it had no equivalent for — `DEAD_REFERENCE` (109) and prompt-level misuse of
+`Not stated` outside typed columns (84) — plus 113 suite-level findings about concept drift
+and narrative control-plane columns that a per-column lint cannot see.
+
+More pointedly, a lint built on the kernel's own parse could not catch the kernel's own
+parsing bug: it compared a prompt against the options *the parser produced*. prompt-graph
+compared the prompt against its own text and found the inconsistency.
+
+What stays in the kernel is cell validation at execution time — the fallback vocabulary,
+Classify conformance, ISO dates, no markdown, no arithmetic, Verbatim against source. That
+checks answers, which is the kernel's job, rather than prompts, which is not.
+
 ## 2a. Providers sit behind one interface, OpenAI by default
 
 The engine makes exactly one kind of call, so the provider surface is small: a cached

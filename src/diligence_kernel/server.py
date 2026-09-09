@@ -406,24 +406,6 @@ def column_prompt(table: Table, column: str) -> dict[str, Any]:
 
 @mcp.tool()
 @_tool
-def corpus_check(
-    table: Annotated[str | None, Field(description="Restrict to one table number.")] = None,
-) -> dict[str, Any]:
-    """Audit the loaded prompts against the standards 00a sets for them.
-
-    Reports a prompt that instructs a value 00a section 5 bans, a Classify column told to
-    return an option it does not offer, a prompt over the character budget, and sections out
-    of the order section 6 fixes. Each is reported once against the column, not once per cell
-    it fills — a run over a real data room would otherwise repeat one prompt's defect
-    thousands of times.
-
-    This reports; it never rewrites. Drafting belongs to the legal-review-table-builder skill.
-    """
-    return service.corpus_check(get_conn(), table=table)
-
-
-@mcp.tool()
-@_tool
 def columns_find(
     query: Annotated[
         str, Field(description="Words to match in a column name, purpose, or prompt.")

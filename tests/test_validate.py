@@ -124,3 +124,40 @@ def test_verbatim_tolerates_smart_quotes_and_dashes():
 
 def test_verbatim_accepts_a_fallback():
     assert validate_verbatim("Not addressed", SOURCE) == []
+
+
+# --- a column's declared vocabulary ------------------------------------------------
+
+
+def test_a_configured_option_is_not_flagged_on_the_cell(loaded):
+    """`None` is Secondary Workstream's declared vocabulary; the defect is the prompt."""
+    assert (
+        validate_cell(
+            "None", native_type="Classify", configured_options=["None", "Unable to determine"]
+        )
+        == []
+    )
+    # Where it is not configured, it is still a banned synonym.
+    violations = validate_cell("None", native_type="Free Response")
+    assert [v.code for v in violations] == ["BANNED_FALLBACK"]
+
+
+def test_a_truncated_option_list_is_not_enforced_as_a_vocabulary(loaded):
+    """An incomplete list must not be presented to the model, nor validated against."""
+    row = loaded.execute(
+        """SELECT configured_options, options_note FROM column_def cd
+           JOIN review_table t ON t.id = cd.table_id
+           WHERE t.number = '05' AND cd.name = 'Secondary Workstream'"""
+    ).fetchone()
+    assert row["options_note"], "the column records that its list is incomplete"
+
+    # With the list suppressed, a real workstream is accepted rather than rejected as
+    # off-vocabulary — the column's whole purpose is to name one.
+    assert validate_cell("Employment and HR", native_type="Classify", configured_options=[]) == []
+    # Asserting the truncated list would have rejected it.
+    violations = validate_cell(
+        "Employment and HR",
+        native_type="Classify",
+        configured_options=["None", "Unable to determine"],
+    )
+    assert [v.code for v in violations] == ["OPTION_NOT_CONFIGURED"]

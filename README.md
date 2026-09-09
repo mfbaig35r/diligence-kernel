@@ -150,6 +150,23 @@ brew install tesseract poppler          # macOS
 uv pip install -e ".[ocr]"
 ```
 
+## The prompt corpus and prompt-graph
+
+`review-table-prompts/` is the source of truth. `prompt-graph` holds the versioned history,
+the cross-table dependency graph and the evaluation log, and is rebuilt from the markdown:
+
+```bash
+python scripts/sync_prompt_graph.py --dry-run    # parse and report, write nothing
+python scripts/sync_prompt_graph.py              # replay the corpus into prompt-graph
+```
+
+Re-syncing unchanged markdown reports every column unchanged and writes nothing. Edit prompts
+in the markdown; use prompt-graph to see what a change would break (`impact_of_change`), what
+the suite looks like as a whole (`suite_check`), and to hold the evaluation log.
+
+Corpus linting lives there, not here. The kernel validates **answers** at execution time; it
+does not lint prompts.
+
 ## Providers
 
 OpenAI by default; Anthropic behind the same interface. Both make the identical call — a
