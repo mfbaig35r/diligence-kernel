@@ -220,3 +220,22 @@ def test_rerun_skips_filled_cells_and_respects_locks(loaded, dataroom):
     _, findings = execute_run(loaded, run_c, filler=third)
     assert third.calls == [], "locked cells are never overwritten"
     assert any(f.code == "CELL_LOCKED_NOT_REFILLED" for f in findings)
+
+
+def test_standalone_is_not_the_name_of_a_base_document(loaded, dataroom):
+    """Table 05: "Return `Standalone` where the document is a base instrument".
+
+    Treating that as naming a base made every base document look like an orphaned dependent,
+    which broke family assembly on every grouped table.
+    """
+    from diligence_kernel.vault.units import _names_a_base, propose_units
+
+    for answer in ("Standalone", "None", "None identified", "Not applicable", ""):
+        assert not _names_a_base(answer), answer
+    assert _names_a_base("Master Services Agreement — 2022-03-14")
+
+    ingest_path(loaded, dataroom)
+    _classify(loaded)
+    units, findings = propose_units(loaded, "01")
+    assert [f.code for f in findings] == [], "no base is mistaken for an orphan"
+    assert any(len(u.document_ids) == 2 for u in units), "the family still forms"

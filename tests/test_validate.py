@@ -155,3 +155,52 @@ def test_a_truncated_option_list_is_not_enforced_as_a_vocabulary():
         configured_options=["None", "Unable to determine"],
     )
     assert [v.code for v in violations] == ["OPTION_NOT_CONFIGURED"]
+
+
+# --- the source tag every Verbatim column is told to append ---------------------------
+
+
+def test_a_verbatim_quote_may_carry_the_source_tag_it_was_asked_for():
+    """Every Verbatim column's output contract says "the quoted text, followed by the source
+    tag" — and the corpus never defines the tag's shape, so a model invents one. Rejecting a
+    correct quotation for carrying it is a false positive on the check 00a says the whole
+    spot-check design rests on.
+    """
+    source = [
+        "Neither party may assign this Agreement without the prior written consent of the "
+        "other party; provided, however, that either party may assign this Agreement without "
+        "consent to a successor in connection with a merger, consolidation, or sale of all or "
+        "substantially all of its assets."
+    ]
+    quote = source[0]
+    for tag in (
+        " [source: msa-amendment-1.txt, 2024-01-09]",
+        " (Amendment No. 1, 2024-01-09)",
+        " — source: Amendment No. 1",
+        "",
+    ):
+        assert validate_verbatim(quote + tag, source) == [], tag or "bare quote"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "The agreement may not be transferred without permission.",
+        "Tenant shall pay base rent of $61,250.00 per month. [source: lease.pdf]",
+        "[source: msa-amendment-1.txt]",
+        "the other party [source: x]",
+    ],
+)
+def test_the_tag_allowance_does_not_let_paraphrase_through(value):
+    """Including a cell that is only a tag: an empty needle is `in` every source."""
+    source = ["Neither party may assign this Agreement without the prior written consent."]
+    assert [v.code for v in validate_verbatim(value, source)] == ["VERBATIM_NOT_IN_SOURCE"]
+
+
+def test_strip_source_tag_leaves_ordinary_text_alone():
+    from diligence_kernel.engine.validate import strip_source_tag
+
+    assert strip_source_tag("no tag here") == "no tag here"
+    assert strip_source_tag("quoted text [source: a.pdf]") == "quoted text"
+    # Parentheses that are part of the quotation are not a tag when text follows them.
+    assert strip_source_tag("fifty percent (50%) of the voting securities").endswith("securities")

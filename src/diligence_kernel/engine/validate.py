@@ -162,6 +162,31 @@ def validate_cell(
     return violations
 
 
+#: A trailing source tag, which every Verbatim column's output contract asks for:
+#: "The quoted text, followed by the source tag." The corpus never defines its shape, so a
+#: model invents one — `[source: msa-amendment-1.txt, 2024-01-09]`, `(Amendment No. 1)`,
+#: `— MSA, 2022-03-14`. The tag is stripped before comparison, because comparing it against
+#: the document would reject a correct quotation for carrying the thing it was asked for.
+_SOURCE_TAG = re.compile(
+    r"(?:\s*[\[(][^\[\]()]{0,160}[\])]\s*|\s*[—–-]\s*(?:source|from|per)\b[^\n]{0,120})\s*$",
+    re.I,
+)
+
+
+#: Below this, what remains after stripping a tag is not a quotation.
+MIN_VERBATIM_CHARS = 20
+
+
+def strip_source_tag(value: str) -> str:
+    """Remove a trailing source tag, if one is present."""
+    previous = None
+    text = value.strip()
+    while previous != text:
+        previous = text
+        text = _SOURCE_TAG.sub("", text).strip()
+    return text
+
+
 def validate_verbatim(value: str, sources: list[str]) -> list[Violation]:
     """Confirm a Verbatim cell reproduces text that actually appears in its sources.
 
@@ -171,9 +196,22 @@ def validate_verbatim(value: str, sources: list[str]) -> list[Violation]:
     text = _normalized(value)
     if not text or is_fallback(text):
         return []
-    needle = _collapse(text)
-    if any(needle in _collapse(s) for s in sources):
+    haystacks = [_collapse(s) for s in sources]
+    if any(_collapse(text) in h for h in haystacks):
         return []
+
+    # Every Verbatim column's output contract asks for "the quoted text, followed by the
+    # source tag", so the tag is compared out. A correct quotation must not be rejected for
+    # carrying the thing it was told to carry.
+    without_tag = strip_source_tag(text)
+    # A cell holding only a tag strips to nothing, and an empty needle is "in" every source.
+    if (
+        without_tag != text
+        and len(_collapse(without_tag)) >= MIN_VERBATIM_CHARS
+        and any(_collapse(without_tag) in h for h in haystacks)
+    ):
+        return []
+
     return [
         Violation(
             "VERBATIM_NOT_IN_SOURCE",

@@ -16,7 +16,7 @@ import re
 import sqlite3
 from dataclasses import dataclass
 
-from ..constants import WORKSTREAM_TABLES
+from ..constants import NAMES_NO_BASE, WORKSTREAM_TABLES
 from ..db import now
 from ..findings import Finding
 from .classify import INTAKE_TABLE
@@ -47,20 +47,13 @@ class ProposedUnit:
     roles: dict[int, str | None]
 
 
-NOT_A_REFERENCE = frozenset(
-    {
-        "",
-        "not applicable",
-        "not addressed",
-        "not stated",
-        "unable to determine",
-        "none",
-    }
-)
-
-
 def _names_a_base(value: str | None) -> bool:
-    return (value or "").strip().lower() not in NOT_A_REFERENCE
+    """Whether this value names another document, or says there is none.
+
+    Sourced from `constants.NAMES_NO_BASE` rather than a set written here, so it cannot drift
+    from the corpus's own vocabulary the way a hand-written list did.
+    """
+    return (value or "").strip().lower() not in NAMES_NO_BASE
 
 
 def _tokens(value: str | None) -> set[str]:

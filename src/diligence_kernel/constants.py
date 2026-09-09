@@ -86,6 +86,17 @@ NATIVE_TYPE_ALIASES: dict[str, str] = {
     "verbatim": "Verbatim",
 }
 
+#: Answers meaning "this document is issued under nothing" — it is the base, or standalone.
+#: `00a`'s positive-finding family plus the corpus's own word for it: Table 05's
+#: `Amends or Issued Under` says "Return `Standalone` where the document is a base instrument".
+#: Treating one of these as the *name* of a base makes every base document look like an
+#: orphaned dependent, which breaks family assembly on every grouped table.
+NAMES_NO_BASE: frozenset[str] = frozenset(
+    {v.lower() for v in FALLBACK_VOCABULARY}
+    | {v.lower() for v in POSITIVE_NULL_FINDINGS}
+    | {"", "standalone", "none", "n/a", "not issued under anything", "base instrument"}
+)
+
 #: Types whose answer must be reproduced from the source, not summarised. These take the
 #: span-exact retrieval path, never the chunk-summary path.
 SPAN_EXACT_TYPES: frozenset[str] = frozenset({"Verbatim"})
