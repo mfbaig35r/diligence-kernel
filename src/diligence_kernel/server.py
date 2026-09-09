@@ -231,6 +231,30 @@ def run_table(
 
 @mcp.tool()
 @_tool
+def run_estimate(
+    table: Table,
+    unit_ids: Annotated[list[int] | None, Field(description="Restrict to these rows.")] = None,
+    columns: Annotated[
+        list[str] | None, Field(description="Restrict to these column names.")
+    ] = None,
+    refill: Annotated[bool, Field(description="Include cells that already carry a value.")] = False,
+    model: Annotated[str | None, Field(description="Price against this model instead.")] = None,
+) -> dict[str, Any]:
+    """Report what run_table would cost, without running it or spending anything.
+
+    Counts the exact requests the run would send. Cells that are already filled, locked, or
+    reviewed are excluded, because a run would skip them. Reports the cost both with and
+    without the cached unit prefix, so the saving from that design is visible.
+
+    Call this before any run over more than a handful of rows.
+    """
+    return service.run_estimate(
+        get_conn(), table, unit_ids=unit_ids, columns=columns, refill=refill, model=model
+    )
+
+
+@mcp.tool()
+@_tool
 def run_status(
     run_id: Annotated[int | None, Field(description="One run; omit for the last twenty.")] = None,
 ) -> dict[str, Any]:

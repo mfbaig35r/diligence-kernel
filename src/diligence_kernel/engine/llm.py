@@ -198,3 +198,51 @@ def _usage_of(response: Any) -> Usage:
         cache_read_tokens=getattr(raw, "cache_read_input_tokens", 0) or 0,
         cache_write_tokens=getattr(raw, "cache_creation_input_tokens", 0) or 0,
     )
+
+
+#: USD per million tokens, (input, output). Cache reads bill at ~0.1x input, writes ~1.25x.
+MODEL_PRICING: dict[str, tuple[float, float]] = {
+    "claude-fable-5-1": (10.00, 50.00),
+    "claude-fable-5": (10.00, 50.00),
+    "claude-opus-5": (5.00, 25.00),
+    "claude-opus-4-8": (5.00, 25.00),
+    "claude-sonnet-5": (2.00, 10.00),
+    "claude-haiku-4-5": (1.00, 5.00),
+}
+CACHE_READ_MULTIPLIER = 0.1
+CACHE_WRITE_MULTIPLIER = 1.25
+
+
+def price_of(model: str) -> tuple[float, float] | None:
+    return MODEL_PRICING.get(model)
+
+
+def estimate_cost(
+    model: str,
+    *,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_tokens: int = 0,
+    cache_write_tokens: int = 0,
+) -> float | None:
+    """USD for a token profile, or None when the model's price is not known here."""
+    price = price_of(model)
+    if price is None:
+        return None
+    per_in, per_out = price
+    return (
+        input_tokens * per_in
+        + cache_read_tokens * per_in * CACHE_READ_MULTIPLIER
+        + cache_write_tokens * per_in * CACHE_WRITE_MULTIPLIER
+        + output_tokens * per_out
+    ) / 1_000_000
+
+
+def count_request_tokens(client: Any, model: str, system: list[dict[str, Any]], user: str) -> int:
+    """Input tokens for one cell request. The token-counting endpoint is free."""
+    counted = client.messages.count_tokens(
+        model=model,
+        system=system,
+        messages=[{"role": "user", "content": user}],
+    )
+    return int(getattr(counted, "input_tokens", 0) or 0)

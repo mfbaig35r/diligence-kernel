@@ -277,6 +277,72 @@ def execute_run(
     return _summary(conn, run_id), findings
 
 
+def preview_run(
+    conn: sqlite3.Connection,
+    table_number: str,
+    scope: RunScope,
+    *,
+    filler: CellFiller | None = None,
+) -> list[dict[str, Any]]:
+    """Build the exact requests a run would send, without sending any of them.
+
+    This is what makes a run's cost knowable before it is paid for. The requests are built
+    through the same helpers `execute_run` uses, so an estimate drawn from them describes
+    the run that would actually happen.
+    """
+    table = conn.execute("SELECT * FROM review_table WHERE number = ?", (table_number,)).fetchone()
+    if table is None:
+        raise KernelError(f"Table {table_number} is not loaded in this matter.")
+    filler = filler or CellFiller()
+    units, columns = _plan(conn, int(table["id"]), scope)
+
+    out: list[dict[str, Any]] = []
+    for unit in units:
+        unit_id = int(unit["id"])
+        blocks, whole = _unit_context(conn, unit_id)
+        if not blocks:
+            continue
+        system = filler.build_system(
+            table_instructions=table["table_instructions"] or "",
+            unit_label=unit["label"],
+            evidence_blocks=blocks,
+        )
+        for index, column in enumerate(columns):
+            column_id = int(column["id"])
+            existing = conn.execute(
+                "SELECT value, locked, review_status FROM cell WHERE unit_id=? AND column_id=?",
+                (unit_id, column_id),
+            ).fetchone()
+            if existing and not scope.refill and existing["value"]:
+                continue
+            if existing and (
+                existing["locked"] or existing["review_status"] in {"Verified", "Corrected"}
+            ):
+                continue
+            request = CellRequest(
+                column_name=column["name"],
+                prompt_text=column["prompt_text"],
+                native_type=column["native_type"],
+                configured_options=json.loads(column["configured_options"] or "null") or [],
+                established=_established(conn, unit_id, column_id),
+            )
+            out.append(
+                {
+                    "unit_id": unit_id,
+                    "unit": unit["label"],
+                    "column": column["name"],
+                    "native_type": column["native_type"],
+                    "stage": column["stage"],
+                    "system": system,
+                    "user": filler.build_user(request),
+                    # Only the first column of a unit pays to write the prefix into cache;
+                    # the rest read it. `whole` says the unit's documents are in that prefix.
+                    "cache_role": ("write" if index == 0 else "read") if whole else "none",
+                }
+            )
+    return out
+
+
 def _unit_context(conn: sqlite3.Connection, unit_id: int) -> tuple[list[dict[str, object]], bool]:
     """The unit's documents whole when they fit, else its opening passages.
 

@@ -46,7 +46,7 @@ From `00a-build-plan-and-standards.md`, checked on every cell before it persists
 **Matter** — `matter_open`, `matter_status`
 **Vault** — `vault_ingest`, `vault_search`, `classification_record`
 **Rows** — `units_propose`, `units_assemble`
-**Execution** — `run_table`, `run_status`
+**Execution** — `run_estimate`, `run_table`, `run_status`
 **Review** — `table_read`, `cell_evidence`, `cell_review`
 **Corpus** — `table_describe`, `column_prompt`, `columns_find`
 **Artifacts** — `artifact_list`, `artifact_build`
@@ -73,6 +73,24 @@ covered. `table_describe` reports the pairs that must be built together.
 uv venv .venv
 uv pip install --python .venv/bin/python -e ".[dev,all]"
 ```
+
+## Smoke test
+
+Verify the live model path on the smallest possible run. Safe by default — with no flags it
+checks credentials and estimates cost using the free token-counting endpoint, and spends
+nothing.
+
+```bash
+.venv/bin/python scripts/smoke_test.py          # free: credentials + cost estimate
+.venv/bin/python scripts/smoke_test.py --run    # spends: fills 4 cells on one row
+```
+
+It works on a throwaway database in a temp directory, never a real matter, and refuses to
+fill more than 12 cells. `--run` prints each cell's value, the sentences it was drawn from
+with their offsets, and any standards violation.
+
+For a real run, `run_estimate` reports what `run_table` would cost before you start it,
+with and without the cached unit prefix.
 
 ## Configure
 

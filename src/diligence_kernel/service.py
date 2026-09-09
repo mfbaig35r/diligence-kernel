@@ -294,6 +294,94 @@ def run_table(
     return result(findings, **summary)
 
 
+def run_estimate(
+    conn: sqlite3.Connection,
+    table: str,
+    *,
+    unit_ids: list[int] | None = None,
+    columns: list[str] | None = None,
+    refill: bool = False,
+    model: str | None = None,
+) -> dict[str, Any]:
+    """What a run would cost, without running it. Token counting is free."""
+    from .engine.llm import DEFAULT_MODEL, count_request_tokens, estimate_cost
+    from .engine.runner import preview_run
+
+    chosen = model or os.environ.get("DILIGENCE_KERNEL_MODEL", DEFAULT_MODEL)
+    scope = RunScope(unit_ids=unit_ids, column_names=columns, refill=refill)
+    requests = preview_run(conn, table, scope)
+    findings: list[Finding] = []
+    if not requests:
+        findings.append(
+            Finding(
+                code="NOTHING_TO_RUN",
+                subject_type="table",
+                subject_id=None,
+                subject_name=f"Table {table}",
+                observation=(
+                    "No cell is in scope: the table has no rows, or every cell in scope is "
+                    "already filled, locked, or reviewed."
+                ),
+                evidence={"table": table},
+            )
+        )
+        return result(findings, table=table, cells=0)
+
+    counted: list[int] = []
+    exact = True
+    try:
+        import anthropic
+
+        client = anthropic.Anthropic()
+        counted = [count_request_tokens(client, chosen, r["system"], r["user"]) for r in requests]
+    except Exception as exc:
+        exact = False
+        counted = [
+            (len(r["user"]) + sum(len(b["text"]) for b in r["system"])) // 4 for r in requests
+        ]
+        findings.append(
+            Finding(
+                code="TOKENS_ESTIMATED_NOT_COUNTED",
+                subject_type="table",
+                subject_id=None,
+                subject_name=f"Table {table}",
+                observation=(
+                    "The token-counting endpoint was unreachable, so the figures are a "
+                    f"character-based approximation: {exc}"
+                ),
+                evidence={"model": chosen},
+            )
+        )
+
+    write = sum(c for c, r in zip(counted, requests, strict=True) if r["cache_role"] == "write")
+    read = sum(c for c, r in zip(counted, requests, strict=True) if r["cache_role"] == "read")
+    plain = sum(c for c, r in zip(counted, requests, strict=True) if r["cache_role"] == "none")
+    est_out = 200 * len(requests)
+
+    cost = estimate_cost(
+        chosen,
+        input_tokens=plain,
+        output_tokens=est_out,
+        cache_read_tokens=read,
+        cache_write_tokens=write,
+    )
+    uncached = estimate_cost(chosen, input_tokens=sum(counted), output_tokens=est_out)
+    units = len({r["unit_id"] for r in requests})
+    return result(
+        findings,
+        table=table,
+        model=chosen,
+        cells=len(requests),
+        rows=units,
+        input_tokens=sum(counted),
+        estimated_output_tokens=est_out,
+        cached_input_tokens=read,
+        token_counts_exact=exact,
+        estimated_cost_usd=None if cost is None else round(cost, 4),
+        estimated_cost_without_caching_usd=None if uncached is None else round(uncached, 4),
+    )
+
+
 def run_status(conn: sqlite3.Connection, run_id: int | None = None) -> dict[str, Any]:
     if run_id is not None:
         row = conn.execute(
