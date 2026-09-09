@@ -24,6 +24,24 @@ answers as established results; filling out of order would feed a prompt an empt
 Stage is computed from the union of each column's declared `Upstream` and the `@Column`
 references detected in its prompt text.
 
+## 1c. The firm playbook lives in its own repository; the split is organisational
+
+`diligence-playbook` holds the extracted playbook fields and the crosswalk. It carries the
+practice's own methodology — prompt text and the field lists behind it — which is a different
+class of material from the engine that runs it, so it sits apart and the kernel reads it by
+path (`DILIGENCE_KERNEL_PLAYBOOK`, else a sibling checkout, else nothing).
+
+The kernel runs perfectly well without it. The crosswalk is analysis, not runtime: a missing
+playbook returns `None` rather than raising, and the crosswalk test skips.
+
+**The kernel's git history still contains the playbook data**, in the two commits that added
+it before the split. That is deliberate, not an oversight. Both repositories are private with
+the same access, so the separation is about keeping the methodology in its own place rather
+than about containment, and a history rewrite would have cost every commit hash and the
+development record for no change in who can read what. If the boundary ever needs to be real —
+different access, an outside collaborator, a public kernel — the rewrite has to happen then,
+and it gets harder the longer it waits.
+
 ## 1a. The markdown is the source of truth; prompt-graph holds the history
 
 Both stores now hold the same 591 prompts, so the moment either is edited they can diverge.
