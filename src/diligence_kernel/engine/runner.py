@@ -121,7 +121,8 @@ def _plan(
         params.extend(scope.unit_ids)
     units = conn.execute(unit_sql + " ORDER BY position", params).fetchall()
 
-    col_sql = """SELECT id, name, native_type, configured_options, prompt_text, stage, position
+    col_sql = """SELECT id, name, native_type, configured_options, options_note, prompt_text,
+                        stage, position
                  FROM column_def WHERE table_id = ?"""
     col_params: list[Any] = [table_id]
     if scope.column_names:
@@ -305,6 +306,8 @@ def execute_run(
 
                     usage_total.add(item.usage)
                     options = json.loads(item.column["configured_options"] or "null") or []
+                    if item.column["options_note"]:
+                        options = []  # incomplete: not a vocabulary to enforce against
                     violations = validate_cell(
                         item.answer.value,
                         native_type=item.column["native_type"],
@@ -672,11 +675,15 @@ def _prepare(
         )
         per_column_sources = [p.text for p in passages]
 
+    # A truncated option list is never presented as the complete vocabulary. The prompt's own
+    # rules name the values; asserting a partial list makes the model comply with the
+    # truncation instead — which is how Secondary Workstream returned `None` on 9 of 10 rows.
+    options = json.loads(column["configured_options"] or "null") or []
     request = CellRequest(
         column_name=column["name"],
         prompt_text=column["prompt_text"],
         native_type=column["native_type"],
-        configured_options=json.loads(column["configured_options"] or "null") or [],
+        configured_options=[] if column["options_note"] else options,
         established=_established(conn, unit_id, column_id),
     )
     return _Prepared(

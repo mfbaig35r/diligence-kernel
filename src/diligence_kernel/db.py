@@ -302,6 +302,16 @@ ALTER TABLE run  ADD COLUMN cache_write_tokens INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE run  ADD COLUMN concurrency        INTEGER NOT NULL DEFAULT 1;
 """,
     ),
+    (
+        5,
+        """
+-- An options bullet that names a vocabulary without spelling it out ("the same 18
+-- workstream values") leaves configured_options incomplete. Presenting a truncated
+-- controlled list to a model as complete makes it comply with the truncation, so the
+-- incompleteness is recorded and the engine stops asserting the list is exhaustive.
+ALTER TABLE column_def ADD COLUMN options_note TEXT;
+""",
+    ),
 ]
 
 

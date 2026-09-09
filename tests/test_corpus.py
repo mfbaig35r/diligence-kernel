@@ -16,12 +16,41 @@ EXPECTED_TABLES = 24
 EXPECTED_COLUMNS = 591
 
 
-def test_every_inventory_parses_without_a_finding(corpus_root):
+def test_the_corpus_parses_with_only_the_one_known_defect(corpus_root):
     specs, findings = parse_corpus(corpus_root)
     tables = [s for s in specs if s.is_table]
     assert len(tables) == EXPECTED_TABLES
     assert sum(len(s.columns) for s in tables) == EXPECTED_COLUMNS
-    assert findings == [], [f.observation for f in findings]
+    assert [f.code for f in findings] == ["OPTIONS_NOT_ENUMERATED"], [
+        f.observation for f in findings
+    ]
+
+
+def test_an_options_bullet_that_names_a_vocabulary_it_does_not_spell_out(corpus_root):
+    """The bug this caught: `the same 18 workstream values` parsed as two options.
+
+    The truncated list went to the model as the complete vocabulary, so it returned `None` on
+    nine of ten documents — not a model failure, a silently under-read controlled list.
+    """
+    specs, findings = parse_corpus(corpus_root)
+    finding = next(f for f in findings if f.code == "OPTIONS_NOT_ENUMERATED")
+    assert finding.subject_name == "05.4 Secondary Workstream"
+    assert finding.evidence["parsed"] == ["None", "Unable to determine"]
+    assert "18 workstream values" in finding.evidence["bullet"]
+
+    column = next(
+        c for s in specs if s.number == "05" for c in s.columns if c.name == "Secondary Workstream"
+    )
+    assert column.options_note, "the column knows its own list is incomplete"
+
+
+def test_a_fully_backticked_options_bullet_carries_no_note(corpus_root):
+    specs, _ = parse_corpus(corpus_root)
+    chain = next(
+        c for s in specs if s.number == "01" for c in s.columns if c.name == "Chain Completeness"
+    )
+    assert chain.configured_options
+    assert chain.options_note is None
 
 
 def test_every_column_carries_a_prompt_and_a_type(corpus_root):
@@ -111,7 +140,7 @@ def test_load_is_idempotent_and_no_table_has_a_cycle(conn, corpus_root):
     counts, findings = load_corpus(conn, corpus_root)
     assert counts["tables"] == EXPECTED_TABLES
     assert counts["columns"] == EXPECTED_COLUMNS
-    assert findings == []
+    assert [f.code for f in findings] == ["OPTIONS_NOT_ENUMERATED"]
 
     again, _ = load_corpus(conn, corpus_root)
     assert again["tables"] == 0 and again["skipped"] == EXPECTED_TABLES

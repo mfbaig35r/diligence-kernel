@@ -81,3 +81,26 @@ def test_corpus_check_tool_summarises_by_code(loaded):
         assert scoped["finding_count"] < out["finding_count"]
     finally:
         server.set_conn(None)
+
+
+def test_a_truncated_option_list_is_not_enforced_as_a_vocabulary(loaded):
+    """An incomplete list must not be presented to the model, nor validated against."""
+    from diligence_kernel.engine.validate import validate_cell
+
+    row = loaded.execute(
+        """SELECT configured_options, options_note FROM column_def cd
+           JOIN review_table t ON t.id = cd.table_id
+           WHERE t.number = '05' AND cd.name = 'Secondary Workstream'"""
+    ).fetchone()
+    assert row["options_note"], "the column records that its list is incomplete"
+
+    # With the list suppressed, a real workstream is accepted rather than rejected as
+    # off-vocabulary — the column's whole purpose is to name one.
+    assert validate_cell("Employment and HR", native_type="Classify", configured_options=[]) == []
+    # Asserting the truncated list would have rejected it.
+    violations = validate_cell(
+        "Employment and HR",
+        native_type="Classify",
+        configured_options=["None", "Unable to determine"],
+    )
+    assert [v.code for v in violations] == ["OPTION_NOT_CONFIGURED"]

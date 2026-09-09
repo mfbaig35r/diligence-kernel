@@ -37,6 +37,9 @@ class ColumnSpec:
     native_type: str | None
     type_caveat: str | None = None
     configured_options: list[str] = field(default_factory=list)
+    #: Text in the options bullet that is not a backticked value — a cross-reference such as
+    #: "the same 18 workstream values". When set, `configured_options` is incomplete.
+    options_note: str | None = None
     upstream: list[str] = field(default_factory=list)
     downstream: list[str] = field(default_factory=list)
     purpose: str | None = None
@@ -51,6 +54,7 @@ class ColumnSpec:
             "name": self.name,
             "native_type": self.native_type,
             "type_caveat": self.type_caveat,
+            "options_note": self.options_note,
             "configured_options": self.configured_options,
             "upstream": self.upstream,
             "downstream": self.downstream,
@@ -302,6 +306,27 @@ def parse_inventory(path: Path) -> tuple[TableSpec, list[Finding]]:
     return spec, findings
 
 
+#: Words an options bullet may carry around its backticked values without meaning more.
+_OPTIONS_FILLER = re.compile(
+    r"\b(?:in\s+UI\s+order|plus|and|or|the|following|these|options?|values?|listed|below)\b",
+    re.I,
+)
+
+
+def _options_prose(value: str) -> str | None:
+    """Text in an options bullet that is not a backticked value.
+
+    `- Configured options, in UI order: the same 18 workstream values, plus \`None\`` names a
+    vocabulary the bullet does not spell out. Returning only the backticked part would hand
+    the engine a controlled list missing eighteen of its twenty entries, and the model would
+    comply with the truncation. So the prose is captured and the list is marked incomplete.
+    """
+    without = BACKTICKED_RE.sub(" ", value)
+    residue = _OPTIONS_FILLER.sub(" ", without)
+    residue = re.sub(r"[,;.:\s]+", " ", residue).strip()
+    return " ".join(value.split()) if residue else None
+
+
 def _split_type_caveat(value: str) -> tuple[str, str | None]:
     r"""Split `Date — confirm the type accepts \`Not stated\`` into type and caveat.
 
@@ -348,6 +373,7 @@ def _parse_column_records(
                 col.configured_options = [
                     o.strip() for o in BACKTICKED_RE.findall(value) if o.strip()
                 ]
+                col.options_note = _options_prose(value)
             elif k == "upstream":
                 col.upstream = _split_names(value)
             elif k == "downstream":
@@ -379,6 +405,27 @@ def _parse_column_records(
                     subject_name=f"{table_number}.{pos} {col.name}",
                     observation="The column record states no native type.",
                     evidence={"source": source, "line": line_no + 1},
+                )
+            )
+        elif col.native_type == "Classify" and col.options_note:
+            findings.append(
+                Finding(
+                    code="OPTIONS_NOT_ENUMERATED",
+                    subject_type="column",
+                    subject_id=None,
+                    subject_name=f"{table_number}.{pos} {col.name}",
+                    observation=(
+                        "The options bullet names a vocabulary it does not spell out "
+                        f"({col.options_note!r}), so only {len(col.configured_options)} of the "
+                        "column's options could be read. A truncated controlled list would be "
+                        "presented to the model as complete."
+                    ),
+                    evidence={
+                        "source": source,
+                        "line": line_no + 1,
+                        "parsed": col.configured_options,
+                        "bullet": col.options_note,
+                    },
                 )
             )
         elif col.native_type == "Classify" and not col.configured_options:

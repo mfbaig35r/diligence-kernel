@@ -198,8 +198,8 @@ def _insert_columns(
         cur = conn.execute(
             """INSERT INTO column_def
                (table_id, position, name, native_type, type_caveat, configured_options,
-                purpose, prompt_text, prompt_chars, prompt_sections, stage)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                options_note, purpose, prompt_text, prompt_chars, prompt_sections, stage)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 table_id,
                 col.position,
@@ -207,6 +207,7 @@ def _insert_columns(
                 col.native_type or "Free Response",
                 col.type_caveat,
                 json.dumps(col.configured_options) if col.configured_options else None,
+                col.options_note,
                 col.purpose,
                 col.prompt_text,
                 len(col.prompt_text),
