@@ -21,6 +21,12 @@ from .vault.ingest import ingest_path
 
 CORPUS_ENV = "DILIGENCE_KERNEL_CORPUS"
 
+#: Output tokens a cell costs, for estimation. Measured at ~1,145 over 50 cells of Table 05
+#: on gpt-5 at medium effort — a reasoning model spends far more than the visible answer
+#: suggests, and the spend tracks how ambiguous the document is rather than how long it is.
+#: Re-measure when the default model or effort changes.
+OUTPUT_TOKENS_PER_CELL = 1100
+
 
 def corpus_root() -> Path:
     raw = os.environ.get(CORPUS_ENV)
@@ -285,11 +291,14 @@ def run_table(
     reason: str | None = None,
     model: str | None = None,
     provider: str | None = None,
+    concurrency: int | None = None,
     filler: Any = None,
 ) -> dict[str, Any]:
     from .engine.llm import CellFiller
     from .engine.providers import ProviderUnavailable
 
+    if concurrency:
+        os.environ["DILIGENCE_KERNEL_CONCURRENCY"] = str(int(concurrency))
     scope = RunScope(unit_ids=unit_ids, column_names=columns, reason=reason, refill=refill)
     if filler is None:
         try:
@@ -372,7 +381,7 @@ def run_estimate(
     write = sum(c for c, r in zip(counted, requests, strict=True) if r["cache_role"] == "write")
     read = sum(c for c, r in zip(counted, requests, strict=True) if r["cache_role"] == "read")
     plain = sum(c for c, r in zip(counted, requests, strict=True) if r["cache_role"] == "none")
-    est_out = 200 * len(requests)
+    est_out = OUTPUT_TOKENS_PER_CELL * len(requests)
 
     # A prefix below the provider's minimum is never cached, so do not price it as if it were.
     per_unit = {}

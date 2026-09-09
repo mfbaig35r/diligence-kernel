@@ -8,16 +8,33 @@ stage-2 prompt consumes the stage-1 answers as established results — filling t
 order would feed a prompt an empty upstream. Across units, iteration is unit-major so the
 unit's documents stay in the cached prefix.
 
+**Concurrency runs inside a stage, never across one.** Every column of a stage is independent
+by construction — that is what a topological stage means — so they are filled together and
+the run waits at the stage boundary. 338 of the corpus's 591 columns are stage 1, so this is
+most of the work.
+
+Two details the naive version gets wrong:
+
+- **The first cell of a unit runs alone.** Firing a whole stage at once means every request
+  misses the prompt cache simultaneously, because nothing has populated it yet. One serial
+  call writes the unit's prefix into cache; the rest of the stage then reads it.
+- **Only the model calls are concurrent.** Every database write happens on the calling
+  thread after a stage completes, so SQLite sees one writer and cell ordering stays
+  deterministic.
+
 The engine never decides which document controls, never computes, and never overwrites a
 locked or human-corrected cell.
 """
 
 from __future__ import annotations
 
+import itertools
 import json
+import os
 import sqlite3
 from collections.abc import Callable
-from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from typing import Any
 
 from ..constants import SPAN_EXACT_TYPES
@@ -34,6 +51,31 @@ WHOLE_UNIT_CHAR_BUDGET = 240_000
 
 #: Passages retrieved per column when a unit is too large to send whole.
 RETRIEVAL_LIMIT = 12
+
+#: Model calls in flight at once, within a stage. Raise for throughput, lower for rate limits.
+DEFAULT_CONCURRENCY = 6
+
+
+def configured_concurrency() -> int:
+    raw = os.environ.get("DILIGENCE_KERNEL_CONCURRENCY")
+    try:
+        return max(1, int(raw)) if raw else DEFAULT_CONCURRENCY
+    except ValueError:
+        return DEFAULT_CONCURRENCY
+
+
+@dataclass(slots=True)
+class _Prepared:
+    """One cell's work, assembled on the calling thread before any call is made."""
+
+    column: sqlite3.Row
+    request: CellRequest
+    system: Any
+    sources: list[str]
+    existing: sqlite3.Row | None
+    answer: Any = None
+    usage: Any = field(default=None)
+    error: Exception | None = None
 
 
 @dataclass(slots=True)
@@ -123,6 +165,10 @@ def execute_run(
     conn.commit()
 
     units, columns = _plan(conn, int(run["table_id"]), scope)
+    workers = configured_concurrency()
+    conn.execute("UPDATE run SET concurrency = ? WHERE id = ?", (workers, run_id))
+    conn.commit()
+
     total = len(units) * len(columns)
     done = 0
     usage_total = Usage()
@@ -132,7 +178,7 @@ def execute_run(
             unit_id = int(unit["id"])
             blocks, whole = _unit_context(conn, unit_id)
             ocr_documents = {
-                int(r["id"]): "ocr"
+                int(r["id"])
                 for r in conn.execute(
                     """SELECT d.id FROM unit_document ud JOIN document d ON d.id = ud.document_id
                        WHERE ud.unit_id = ? AND d.text_source = 'ocr'""",
@@ -146,11 +192,15 @@ def execute_run(
                         subject_type="unit",
                         subject_id=unit_id,
                         subject_name=unit["label"],
-                        observation="The review unit holds no extracted text; its cells were skipped.",
+                        observation=(
+                            "The review unit holds no extracted text; its cells were skipped."
+                        ),
                         evidence={"unit_id": unit_id},
                     )
                 )
                 done += len(columns)
+                if progress:
+                    progress(done, total)
                 continue
 
             system = filler.build_system(
@@ -160,128 +210,127 @@ def execute_run(
                 cache_key=f"{table['number']}:{unit_id}",
             )
             sources = [str(b.get("text", "")) for b in blocks]
-            unit_has_ocr = any(b.get("text_source") == "ocr" for b in blocks)
+            unit_has_ocr = bool(ocr_documents)
+            first_of_unit = True
 
-            for column in columns:
-                done += 1
+            # Stage by stage. Columns are already ordered by stage, so grouping is a scan.
+            for _, group in itertools.groupby(columns, key=lambda c: c["stage"]):
+                stage_columns = list(group)
+                prepared: list[_Prepared] = []
+                for column in stage_columns:
+                    item = _prepare(
+                        conn,
+                        unit,
+                        unit_id,
+                        column,
+                        filler,
+                        table,
+                        system,
+                        sources,
+                        whole,
+                        scope,
+                        findings,
+                    )
+                    if item is None:
+                        done += 1
+                        continue
+                    prepared.append(item)
+                if not prepared:
+                    if progress:
+                        progress(done, total)
+                    continue
+
+                # The first call of a unit runs alone so it populates the prompt cache; the
+                # rest of the stage then reads the prefix instead of re-paying for it.
+                if first_of_unit:
+                    _call(filler, prepared[0])
+                    head, tail = prepared[:1], prepared[1:]
+                    first_of_unit = False
+                else:
+                    head, tail = [], prepared
+
+                if tail:
+                    with ThreadPoolExecutor(max_workers=min(workers, len(tail))) as pool:
+                        list(pool.map(lambda item: _call(filler, item), tail))
+
+                # Everything below runs on this thread: one writer, deterministic order.
+                for item in head + tail:
+                    done += 1
+                    if item.error is not None:
+                        conn.execute(
+                            "UPDATE run SET cells_failed = cells_failed + 1 WHERE id = ?",
+                            (run_id,),
+                        )
+                        findings.append(
+                            Finding(
+                                code="CELL_FILL_FAILED",
+                                subject_type="cell",
+                                subject_id=None,
+                                subject_name=f"{unit['label']} / {item.column['name']}",
+                                observation=f"The cell could not be filled: {item.error}",
+                                evidence={
+                                    "unit_id": unit_id,
+                                    "column": item.column["name"],
+                                },
+                            )
+                        )
+                        continue
+
+                    usage_total.add(item.usage)
+                    options = json.loads(item.column["configured_options"] or "null") or []
+                    violations = validate_cell(
+                        item.answer.value,
+                        native_type=item.column["native_type"],
+                        configured_options=options,
+                        column_name=item.column["name"],
+                    )
+                    if item.column["native_type"] in SPAN_EXACT_TYPES:
+                        violations += validate_verbatim(item.answer.value, item.sources)
+                    violations += validate_provenance(
+                        item.column["native_type"], unit_has_ocr=unit_has_ocr
+                    )
+
+                    _persist_cell(
+                        conn,
+                        unit_id=unit_id,
+                        column_id=int(item.column["id"]),
+                        run_id=run_id,
+                        answer=item.answer,
+                        violations=[v.code for v in violations],
+                        usage=item.usage,
+                        previous=item.existing,
+                    )
+                    for v in violations:
+                        findings.append(
+                            Finding(
+                                code=v.code,
+                                subject_type="cell",
+                                subject_id=None,
+                                subject_name=f"{unit['label']} / {item.column['name']}",
+                                observation=v.detail,
+                                evidence={
+                                    "value": item.answer.value[:300],
+                                    "column": item.column["name"],
+                                },
+                            )
+                        )
+                    conn.execute(
+                        """UPDATE run SET cells_done = cells_done + 1,
+                           input_tokens = input_tokens + ?, output_tokens = output_tokens + ?,
+                           cache_read_tokens = cache_read_tokens + ?,
+                           cache_write_tokens = cache_write_tokens + ?
+                           WHERE id = ?""",
+                        (
+                            item.usage.input_tokens,
+                            item.usage.output_tokens,
+                            item.usage.cache_read_tokens,
+                            item.usage.cache_write_tokens,
+                            run_id,
+                        ),
+                    )
+                conn.commit()
                 if progress:
                     progress(done, total)
-                column_id = int(column["id"])
-                existing = conn.execute(
-                    "SELECT id, value, locked, review_status FROM cell WHERE unit_id=? AND column_id=?",
-                    (unit_id, column_id),
-                ).fetchone()
-                if existing and not scope.refill and existing["value"]:
-                    continue
-                if existing and (
-                    existing["locked"] or existing["review_status"] in {"Verified", "Corrected"}
-                ):
-                    findings.append(
-                        Finding(
-                            code="CELL_LOCKED_NOT_REFILLED",
-                            subject_type="cell",
-                            subject_id=int(existing["id"]),
-                            subject_name=column["name"],
-                            observation=(
-                                f"The cell was left as it stands because it is "
-                                f"{'locked' if existing['locked'] else existing['review_status'].lower()}."
-                            ),
-                            evidence={"unit": unit["label"], "column": column["name"]},
-                        )
-                    )
-                    continue
-
-                per_column_system = system
-                per_column_sources = sources
-                if not whole:
-                    passages = search.search_unit(
-                        conn, unit_id, column["prompt_text"], limit=RETRIEVAL_LIMIT
-                    )
-                    retrieved = [
-                        {
-                            "filename": p.filename,
-                            "role": None,
-                            "text": p.text,
-                            "truncated": False,
-                            "text_source": ocr_documents.get(p.document_id, "extracted"),
-                        }
-                        for p in passages
-                    ]
-                    per_column_system = filler.build_system(
-                        table_instructions=table["table_instructions"] or "",
-                        unit_label=unit["label"],
-                        evidence_blocks=retrieved,
-                        cache_key=f"{table['number']}:{unit_id}:{column['name']}",
-                    )
-                    per_column_sources = [p.text for p in passages]
-
-                options = json.loads(column["configured_options"] or "null") or []
-                request = CellRequest(
-                    column_name=column["name"],
-                    prompt_text=column["prompt_text"],
-                    native_type=column["native_type"],
-                    configured_options=options,
-                    established=_established(conn, unit_id, column_id),
-                )
-
-                try:
-                    answer, usage = filler.fill(request, system=per_column_system)
-                except Exception as exc:
-                    conn.execute(
-                        "UPDATE run SET cells_failed = cells_failed + 1 WHERE id = ?", (run_id,)
-                    )
-                    conn.commit()
-                    findings.append(
-                        Finding(
-                            code="CELL_FILL_FAILED",
-                            subject_type="cell",
-                            subject_id=None,
-                            subject_name=f"{unit['label']} / {column['name']}",
-                            observation=f"The cell could not be filled: {exc}",
-                            evidence={"unit_id": unit_id, "column": column["name"]},
-                        )
-                    )
-                    continue
-
-                usage_total.add(usage)
-                violations = validate_cell(
-                    answer.value,
-                    native_type=column["native_type"],
-                    configured_options=options,
-                    column_name=column["name"],
-                )
-                if column["native_type"] in SPAN_EXACT_TYPES:
-                    violations += validate_verbatim(answer.value, per_column_sources)
-                violations += validate_provenance(column["native_type"], unit_has_ocr=unit_has_ocr)
-
-                _persist_cell(
-                    conn,
-                    unit_id=unit_id,
-                    column_id=column_id,
-                    run_id=run_id,
-                    answer=answer,
-                    violations=[v.code for v in violations],
-                    usage=usage,
-                    previous=existing,
-                )
-                for v in violations:
-                    findings.append(
-                        Finding(
-                            code=v.code,
-                            subject_type="cell",
-                            subject_id=None,
-                            subject_name=f"{unit['label']} / {column['name']}",
-                            observation=v.detail,
-                            evidence={"value": answer.value[:300], "column": column["name"]},
-                        )
-                    )
-                conn.execute(
-                    """UPDATE run SET cells_done = cells_done + 1,
-                       input_tokens = input_tokens + ?, output_tokens = output_tokens + ?
-                       WHERE id = ?""",
-                    (usage.input_tokens, usage.output_tokens, run_id),
-                )
-                conn.commit()
 
         conn.execute("UPDATE run SET status='complete', finished_at=? WHERE id=?", (now(), run_id))
         conn.commit()
@@ -430,13 +479,16 @@ def _persist_cell(
         run_id,
         usage.input_tokens,
         usage.output_tokens,
+        usage.cache_read_tokens,
+        usage.cache_write_tokens,
         now(),
     )
     if previous:
         cell_id = int(previous["id"])
         conn.execute(
             """UPDATE cell SET value=?, is_fallback=?, validation=?, run_id=?,
-               input_tokens=?, output_tokens=?, filled_at=?, stale=0 WHERE id=?""",
+               input_tokens=?, output_tokens=?, cache_read_tokens=?, cache_write_tokens=?,
+               filled_at=?, stale=0 WHERE id=?""",
             (*payload, cell_id),
         )
         if previous["value"] != answer.value:
@@ -449,8 +501,9 @@ def _persist_cell(
     else:
         cur = conn.execute(
             """INSERT INTO cell (unit_id, column_id, value, is_fallback, validation, run_id,
-                                 input_tokens, output_tokens, filled_at)
-               VALUES (?,?,?,?,?,?,?,?,?)""",
+                                 input_tokens, output_tokens, cache_read_tokens,
+                                 cache_write_tokens, filled_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
             (unit_id, column_id, *payload),
         )
         cell_id = int(cur.lastrowid)
@@ -518,5 +571,95 @@ def _summary(conn: sqlite3.Connection, run_id: int) -> dict[str, Any]:
         "cells_failed": row["cells_failed"],
         "input_tokens": row["input_tokens"],
         "output_tokens": row["output_tokens"],
+        "cache_read_tokens": row["cache_read_tokens"],
+        "cache_write_tokens": row["cache_write_tokens"],
+        "concurrency": row["concurrency"],
         "error": row["error"],
     }
+
+
+def _prepare(
+    conn: sqlite3.Connection,
+    unit: sqlite3.Row,
+    unit_id: int,
+    column: sqlite3.Row,
+    filler: CellFiller,
+    table: sqlite3.Row,
+    system: Any,
+    sources: list[str],
+    whole: bool,
+    scope: RunScope,
+    findings: list[Finding],
+) -> _Prepared | None:
+    """Assemble one cell's work on the calling thread, or None if it should be skipped.
+
+    Every database read happens here — the skip checks, the established results, and the
+    per-column retrieval — so that a worker thread only makes a network call.
+    """
+    column_id = int(column["id"])
+    existing = conn.execute(
+        "SELECT id, value, locked, review_status FROM cell WHERE unit_id=? AND column_id=?",
+        (unit_id, column_id),
+    ).fetchone()
+    if existing and not scope.refill and existing["value"]:
+        return None
+    if existing and (existing["locked"] or existing["review_status"] in {"Verified", "Corrected"}):
+        findings.append(
+            Finding(
+                code="CELL_LOCKED_NOT_REFILLED",
+                subject_type="cell",
+                subject_id=int(existing["id"]),
+                subject_name=column["name"],
+                observation=(
+                    "The cell was left as it stands because it is "
+                    f"{'locked' if existing['locked'] else existing['review_status'].lower()}."
+                ),
+                evidence={"unit": unit["label"], "column": column["name"]},
+            )
+        )
+        return None
+
+    per_column_system, per_column_sources = system, sources
+    if not whole:
+        passages = search.search_unit(conn, unit_id, column["prompt_text"], limit=RETRIEVAL_LIMIT)
+        retrieved = [
+            {
+                "filename": p.filename,
+                "role": None,
+                "text": p.text,
+                "truncated": False,
+                "text_source": "extracted",
+            }
+            for p in passages
+        ]
+        per_column_system = filler.build_system(
+            table_instructions=table["table_instructions"] or "",
+            unit_label=unit["label"],
+            evidence_blocks=retrieved,
+            cache_key=f"{table['number']}:{unit_id}:{column['name']}",
+        )
+        per_column_sources = [p.text for p in passages]
+
+    request = CellRequest(
+        column_name=column["name"],
+        prompt_text=column["prompt_text"],
+        native_type=column["native_type"],
+        configured_options=json.loads(column["configured_options"] or "null") or [],
+        established=_established(conn, unit_id, column_id),
+    )
+    return _Prepared(
+        column=column,
+        request=request,
+        system=per_column_system,
+        sources=per_column_sources,
+        existing=existing,
+    )
+
+
+def _call(filler: CellFiller, item: _Prepared) -> _Prepared:
+    """The only work that runs off the calling thread. Never raises."""
+    try:
+        item.answer, item.usage = filler.fill(item.request, system=item.system)
+    except Exception as exc:  # recorded per cell; one failure must not stop a stage
+        item.error = exc
+    return item

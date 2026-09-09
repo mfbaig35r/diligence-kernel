@@ -289,6 +289,19 @@ ALTER TABLE document ADD COLUMN privilege_markings TEXT;
 CREATE INDEX idx_document_parent ON document(parent_document_id);
 """,
     ),
+    (
+        4,
+        """
+-- Cached input is billed at a fraction of fresh input, so a run's real cost cannot be read
+-- without it. Recording it per cell also makes cache behaviour measurable rather than
+-- inferred from the gap between two units' input counts.
+ALTER TABLE cell ADD COLUMN cache_read_tokens  INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE cell ADD COLUMN cache_write_tokens INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE run  ADD COLUMN cache_read_tokens  INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE run  ADD COLUMN cache_write_tokens INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE run  ADD COLUMN concurrency        INTEGER NOT NULL DEFAULT 1;
+""",
+    ),
 ]
 
 

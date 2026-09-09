@@ -180,7 +180,7 @@ def main() -> int:
             else 0
         )
         fresh = sum(counted) - cached
-        est_out = 200 * len(requests)
+        est_out = service.OUTPUT_TOKENS_PER_CELL * len(requests)
         cost = estimate_cost(
             filler.provider,
             model,

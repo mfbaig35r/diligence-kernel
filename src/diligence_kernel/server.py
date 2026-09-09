@@ -218,6 +218,10 @@ def run_table(
         str | None,
         Field(description="'openai' or 'anthropic'. Defaults to DILIGENCE_KERNEL_PROVIDER."),
     ] = None,
+    concurrency: Annotated[
+        int | None,
+        Field(description="Model calls in flight at once, within a stage. Default 6."),
+    ] = None,
 ) -> dict[str, Any]:
     """Fill a review table's cells, in dependency order, from the documents in each row.
 
