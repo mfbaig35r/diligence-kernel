@@ -11,6 +11,7 @@ A matter-scoped M&A diligence vault and review-table execution engine, over MCP.
 | [Standards](standards.md) | What `00a` requires, and where each rule is enforced |
 | [Findings reference](findings.md) | Every code the server can return, and what to do about it |
 | [Operations](operations.md) | Configuration, scripts, the smoke test |
+| [Playbook crosswalk](../playbook/README.md) | The firm's M&A playbook mapped against the corpus, both directions |
 | [Decisions](../DECISIONS.md) | Why the system is shaped this way |
 
 ## What it is

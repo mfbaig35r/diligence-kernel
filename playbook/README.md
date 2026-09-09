@@ -31,22 +31,62 @@ against extraction columns reports design as deficiency:
 | (iii) flag missing | `Referenced but Not Produced` columns, the coverage register, and the test sets |
 | (iv) synthesize | Derived artifacts and the memo — filters over cells, never fresh questions |
 
+## Matching is by embedding, not by shared words
+
+Term overlap was tried first and discarded. It resolved 42% of fields while 95% of their
+distinct terms appeared somewhere in the corpus, and it called covered concepts gaps —
+`drag-along`, `anti-dilution`, `liquidation preference` and `preemptive rights` all have
+columns of their own. A scorer that mislabels covered concepts is worse than none, because a
+gap report is read as a list of things to build.
+
+`text-embedding-3-small`, cached by content hash so re-runs are free. The threshold is
+calibrated rather than guessed:
+
+```bash
+python scripts/crosswalk.py --calibrate
+```
+
+Ten pairs confirmed by reading the corpus: **10/10 rank in the top five, 6/10 first**, and the
+lowest score on an expected column is 0.48. `COVERED_AT` is set to 0.45, below that minimum,
+so a covered concept is not reported as a gap.
+
 ## What the crosswalk established
 
 - **Prompt boundaries are not table boundaries.** 3.4.1, "Summarize a Corporate Organizational
   Document", asks for capital structure, liquidation preferences and anti-dilution — which the
   corpus places in Capitalization (03), not Corporate (02).
-- **95% of the playbook's distinct field terms appear somewhere in the corpus**, which is
-  consistent with the earlier prose crosswalk's finding of a near one-to-one structural match.
-- Prompts 3.4.15 (tax synthesis) and 3.4.16 (financial statements) sit outside what the
-  corpus targets; `00a` places financial statements out of scope deliberately.
+- **82% of extraction fields are answered** (55 of 67), consistent with the earlier prose
+  crosswalk's finding of a near one-to-one structural match.
 
-## What it did not establish
+### The four real gaps
 
-**Any coverage percentage.** The scorer is lexical term overlap and resolves about 42% of
-fields, against a 95% term-level presence — so it under-reports badly, and its gap signal is
-unreliable in both directions. Every flagged gap needs reading before it is believed.
+Of twelve uncovered extraction fields, eight belong to 3.4.16 and are answered by derived
+artifacts rather than columns — third-party consents, regulatory approvals and pre-closing
+steps are the consent schedule and closing conditions. Four are genuine:
 
-Replacing the scorer with embeddings over the 92 fields and 591 columns would cost cents and
-make the numbers mean something. Until then, treat this as a structured inventory and a
-layer map rather than a measurement.
+| Field | Prompt | Note |
+|---|---|---|
+| Benefit plan compliance (401(k) loans, ACA, pensions) | 3.4.11 | Benefits and pensions is uncovered by both documents; `00a` section 2 lists it as an open scope question |
+| WARN Act obligations on post-closing restructuring | 3.4.11 | No column anywhere |
+| Property type (office, warehouse, manufacturing, retail) | 3.4.12 | Tables 13 and 14 record the interest and the address but not the use type |
+| Unregistered trademarks and domain names | 3.4.9 | Borderline at 0.437; `10 Title or Mark` is close but registration-oriented |
+
+### The reverse direction
+
+212 columns answer nothing the playbook asks, and the split matters:
+
+- **124 are in workstreams the playbook has no prompt for at all** — intake (05), debt and
+  liens (18, 19), insurance (20), environmental (21–23). That is the playbook being
+  incomplete, not the corpus being wasteful, and it matches the earlier crosswalk's finding.
+- **88 are in workstreams a prompt does cover.** These are the ones worth reviewing, though
+  many are deliberate: `Documents in Unit` is an orientation column feeding other columns
+  rather than a reader, and `Entity File Number`, `Prior Names`, `Early Exercise and 83(b)
+  Election` and `Immigration Dependency` are the corpus being more thorough than the playbook.
+
+`playbook/crosswalk.json` carries every field's matches and every column's best score, so the
+review can be done against the numbers rather than re-run.
+
+## What it still does not establish
+
+Whether either document is right. Both are syntheses; neither has been validated against how
+the practice actually works, and a high match rate means only that they agree.
