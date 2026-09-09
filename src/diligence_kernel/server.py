@@ -16,7 +16,7 @@ from typing import Annotated, Any
 from mcp.server.mcpserver import MCPServer
 from pydantic import Field
 
-from . import db, service
+from . import db, env, service
 from .findings import KernelError
 
 INSTRUCTIONS = """diligence-kernel ingests an M&A data room, classifies and groups its files, and
@@ -424,6 +424,7 @@ def artifact_build(
 
 
 def main() -> None:
+    env.load()
     parser = argparse.ArgumentParser(prog="diligence-kernel")
     parser.add_argument("--migrate", action="store_true", help="Apply migrations and exit.")
     parser.add_argument("--corpus-check", action="store_true", help="Parse the corpus and exit.")

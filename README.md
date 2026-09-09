@@ -174,6 +174,17 @@ export DILIGENCE_KERNEL_PRICE_OUT=10.00        # USD per million output tokens
 
 On OpenAI, `run_estimate` needs no credentials and no network — tiktoken counts locally.
 
+## Credentials
+
+The server is launched by its MCP client, not from a shell, so it inherits nothing from your
+terminal. Put the key in a `.env` at the project root rather than in the MCP config:
+
+```bash
+cp .env.example .env      # then edit it
+```
+
+`.env` is gitignored, and an environment variable already set always wins over it.
+
 ## Install
 
 ```bash

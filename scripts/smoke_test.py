@@ -14,6 +14,7 @@ number of cells so a typo cannot start a batch.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import sys
 import tempfile
@@ -22,7 +23,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
-from diligence_kernel import db, service  # noqa: E402
+from diligence_kernel import db, env, service  # noqa: E402
 from diligence_kernel.engine.llm import CellFiller  # noqa: E402
 from diligence_kernel.engine.providers import ProviderUnavailable, estimate_cost  # noqa: E402
 from diligence_kernel.engine.runner import RunScope, preview_run  # noqa: E402
@@ -77,6 +78,7 @@ def main() -> int:
     parser.add_argument("--keep", action="store_true", help="Keep the temporary database.")
     args = parser.parse_args()
 
+    loaded_from_env = env.load()
     workdir = Path(tempfile.mkdtemp(prefix="dk-smoke-"))
     conn = db.connect(workdir / "smoke.db")
     try:
@@ -88,6 +90,14 @@ def main() -> int:
 
     try:
         # -- 1. corpus ------------------------------------------------------------------
+        rule("0. Credentials")
+        if loaded_from_env:
+            say(f"  {GREEN}✓{RESET} loaded {', '.join(sorted(set(loaded_from_env)))} from .env")
+        elif os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY"):
+            say(f"  {GREEN}✓{RESET} a key is set in the environment")
+        else:
+            say(f"  {YELLOW}!{RESET} no key found in the environment or a .env file")
+
         rule("1. Corpus")
         loaded = service.matter_open(conn, "Smoke Test", as_of_date="2026-09-08")
         say(
@@ -207,10 +217,6 @@ def main() -> int:
 
         # -- 5. run (spends) ---------------------------------------------------------------
         rule("5. Run")
-        if args.effort:
-            import os
-
-            os.environ["DILIGENCE_KERNEL_EFFORT"] = args.effort
         out = service.run_table(
             conn,
             args.table,
