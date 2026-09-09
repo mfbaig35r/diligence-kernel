@@ -6,6 +6,9 @@ It ingests a data room, classifies and tags every file, assembles review units, 
 runs the review-table prompt corpus against them — filling cells with evidence attached,
 so the analysis persists for higher-level M&A work and drafting.
 
+**Documentation:** [project wiki](docs/README.md) — architecture, the corpus, ingestion,
+running a table, standards, findings reference, operations.
+
 ## What it is
 
 ```
