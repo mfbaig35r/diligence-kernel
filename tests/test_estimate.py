@@ -39,11 +39,48 @@ def test_unknown_provider_is_refused():
 
 def test_pricing_is_per_provider():
     openai, anthropic = OpenAIProvider(), AnthropicProvider()
-    assert openai.pricing("gpt-5") == (1.25, 10.00)
-    assert anthropic.pricing("claude-opus-5") == (5.00, 25.00)
+    assert openai.pricing("gpt-5.4").input == 2.50
+    assert openai.pricing("gpt-5.4").output == 15.00
+    assert anthropic.pricing("claude-opus-5").input == 5.00
     # A model the table does not carry reports unknown rather than a stale guess.
-    assert openai.pricing("gpt-6-astra") is None
-    assert estimate_cost(openai, "gpt-6-astra", input_tokens=1000, output_tokens=100) is None
+    assert openai.pricing("gpt-7-imaginary") is None
+    assert estimate_cost(openai, "gpt-7-imaginary", input_tokens=1000, output_tokens=100) is None
+
+
+def test_cached_input_and_cache_writes_are_per_model():
+    """The published rates differ; a single provider-wide multiplier would be wrong."""
+    openai = OpenAIProvider()
+    # gpt-5.4 does not charge separately for a cache write; gpt-5.6-terra does.
+    assert openai.pricing("gpt-5.4").cache_write is None
+    assert openai.pricing("gpt-5.6-terra").cache_write == 2.50
+    assert openai.pricing("gpt-5.6-terra").cached_input == 0.20
+
+    free_write = estimate_cost(
+        openai, "gpt-5.4", input_tokens=0, output_tokens=0, cache_write_tokens=10_000
+    )
+    paid_write = estimate_cost(
+        openai, "gpt-5.6-terra", input_tokens=0, output_tokens=0, cache_write_tokens=10_000
+    )
+    assert free_write == 0.0
+    assert paid_write == pytest.approx(0.025)
+
+
+def test_long_context_is_priced_at_its_own_rate():
+    from diligence_kernel.engine.providers import LONG_CONTEXT_THRESHOLD
+
+    openai = OpenAIProvider()
+    short = estimate_cost(openai, "gpt-5.4", input_tokens=1_000, output_tokens=0)
+    long = estimate_cost(
+        openai, "gpt-5.4", input_tokens=LONG_CONTEXT_THRESHOLD + 1_000, output_tokens=0
+    )
+    assert short == pytest.approx(1_000 * 2.50 / 1e6), "short-context input rate"
+    assert long == pytest.approx((LONG_CONTEXT_THRESHOLD + 1_000) * 5.00 / 1e6), "double, above"
+
+    # A model with no long-context rates keeps its single rate at any size.
+    flat = AnthropicProvider()
+    a = estimate_cost(flat, "claude-opus-5", input_tokens=1_000, output_tokens=0)
+    b = estimate_cost(flat, "claude-opus-5", input_tokens=1_000_000, output_tokens=0)
+    assert b == pytest.approx(a * 1000)
 
 
 def test_an_operator_can_price_an_unlisted_model(monkeypatch):
@@ -56,18 +93,22 @@ def test_an_operator_can_price_an_unlisted_model(monkeypatch):
 
 
 def test_cost_is_linear_in_tokens():
+    """Below the long-context threshold, where ordinary review units live."""
     p = OpenAIProvider()
-    assert estimate_cost(p, "gpt-5", input_tokens=1_000_000, output_tokens=0) == pytest.approx(1.25)
-    assert estimate_cost(p, "gpt-5", input_tokens=0, output_tokens=1_000_000) == pytest.approx(10.0)
+    assert estimate_cost(p, "gpt-5.4", input_tokens=10_000, output_tokens=0) == pytest.approx(0.025)
+    assert estimate_cost(p, "gpt-5.4", input_tokens=0, output_tokens=10_000) == pytest.approx(0.15)
 
 
 def test_cached_reads_are_cheaper_than_fresh_input():
-    for provider, model in ((OpenAIProvider(), "gpt-5"), (AnthropicProvider(), "claude-opus-5")):
+    for provider, model in (
+        (OpenAIProvider(), "gpt-5.4"),
+        (AnthropicProvider(), "claude-opus-5"),
+    ):
         fresh = estimate_cost(provider, model, input_tokens=1_000_000, output_tokens=0)
         cached = estimate_cost(
             provider, model, input_tokens=0, output_tokens=0, cache_read_tokens=1_000_000
         )
-        assert cached == pytest.approx(fresh * provider.cache_read_multiplier)
+        assert cached == pytest.approx(fresh * 0.1), "cached input is a tenth of fresh"
 
 
 def test_anthropic_cache_writes_cost_a_premium():
@@ -83,7 +124,7 @@ def test_openai_counts_tokens_locally_without_credentials():
     """tiktoken means an OpenAI estimate needs no network and no key."""
     p = OpenAIProvider()
     n, exact = p.count_tokens(
-        "gpt-5", PromptPrefix(text="The quick brown fox. " * 50, cache_key="k"), "x " * 20
+        "gpt-5.4", PromptPrefix(text="The quick brown fox. " * 50, cache_key="k"), "x " * 20
     )
     assert n > 100
     assert exact is False, "local counting excludes request scaffolding, so it is approximate"
@@ -189,7 +230,7 @@ def test_run_estimate_tool_reports_cost_without_spending(loaded, dataroom, monke
         _classify(loaded)
         assemble_units(loaded, "01")
 
-        out = server.run_estimate("01", model="gpt-5")
+        out = server.run_estimate("01", model="gpt-5.4")
         assert out["provider"] == "openai"
         assert out["cells"] == 54
         assert out["rows"] == 2
@@ -215,7 +256,7 @@ def test_run_estimate_reports_when_there_is_nothing_to_run(loaded, dataroom):
         run_id = create_run(loaded, "01", RunScope(), model="stub")
         execute_run(loaded, run_id, filler=StubFiller())
 
-        out = server.run_estimate("01", model="gpt-5")
+        out = server.run_estimate("01", model="gpt-5.4")
         assert out["cells"] == 0
         assert any(f["code"] == "NOTHING_TO_RUN" for f in out["findings"])
     finally:

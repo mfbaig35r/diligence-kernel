@@ -80,8 +80,8 @@ class Provider(ABC):
     def count_tokens(self, model: str, prefix: PromptPrefix, user: str) -> tuple[int, bool]:
         """Input tokens for one request, and whether the count is exact."""
 
-    def pricing(self, model: str) -> tuple[float, float] | None:
-        """USD per million (input, output), or None when this model's price is unknown here."""
+    def pricing(self, model: str) -> Price | None:
+        """The model's published rates, or None when they are not recorded here."""
         return PRICING.get(self.name, {}).get(model)
 
 
@@ -92,7 +92,7 @@ class Provider(ABC):
 
 class OpenAIProvider(Provider):
     name = "openai"
-    default_model = "gpt-5"
+    default_model = "gpt-5.4"
     default_effort = "medium"
     cache_read_multiplier = 0.1
     cache_write_multiplier = 1.0
@@ -268,27 +268,76 @@ def _anthropic_usage(response: Any) -> Usage:
 # pricing and selection
 # ---------------------------------------------------------------------------------------
 
-#: USD per million tokens, (input, output). Deliberately partial: a model absent here
-#: reports its cost as unknown rather than being priced from a stale guess. Override for
-#: any model with DILIGENCE_KERNEL_PRICE_IN and DILIGENCE_KERNEL_PRICE_OUT.
-PRICING: dict[str, dict[str, tuple[float, float]]] = {
+
+@dataclass(frozen=True, slots=True)
+class Price:
+    """USD per million tokens for one model.
+
+    Cached input and cache writes are separate line items and vary by model, so they are not
+    a single provider-wide multiplier. Some models bill nothing for a cache write; on others
+    it is a premium over fresh input. `long_*` applies above `LONG_CONTEXT_THRESHOLD`.
+    """
+
+    input: float
+    output: float
+    cached_input: float | None = None
+    #: None means a cache write is not separately charged.
+    cache_write: float | None = None
+    long_input: float | None = None
+    long_output: float | None = None
+    long_cached_input: float | None = None
+    long_cache_write: float | None = None
+
+    def at(self, tokens: int) -> tuple[float, float, float, float]:
+        """(input, cached input, cache write, output) rates for a request of this size."""
+        long = tokens >= LONG_CONTEXT_THRESHOLD and self.long_input is not None
+        if long:
+            return (
+                self.long_input or self.input,
+                self.long_cached_input
+                if self.long_cached_input is not None
+                else (self.long_input or self.input) * 0.1,
+                self.long_cache_write or 0.0,
+                self.long_output or self.output,
+            )
+        return (
+            self.input,
+            self.cached_input if self.cached_input is not None else self.input * 0.1,
+            self.cache_write or 0.0,
+            self.output,
+        )
+
+
+#: Where a request moves onto long-context rates. **Assumed**, not confirmed against the
+#: price list: correct it if OpenAI publishes a different boundary. Review units in this
+#: corpus run a few thousand tokens, so it rarely binds — but a large lease could.
+LONG_CONTEXT_THRESHOLD = 128_000
+
+#: Deliberately partial: a model absent here reports its cost as unknown rather than being
+#: priced from a stale guess. Override any model with DILIGENCE_KERNEL_PRICE_IN / _OUT.
+PRICING: dict[str, dict[str, Price]] = {
     "openai": {
-        "gpt-5": (1.25, 10.00),
-        "gpt-5-mini": (0.25, 2.00),
-        "gpt-5-nano": (0.05, 0.40),
-        "gpt-4.1": (2.00, 8.00),
-        "gpt-4.1-mini": (0.40, 1.60),
-        "gpt-4.1-nano": (0.10, 0.40),
-        "o3": (2.00, 8.00),
-        "o4-mini": (1.10, 4.40),
+        "gpt-6-astra": Price(10.00, 50.00, 1.00, 12.50, 20.00, 75.00, 2.00, 25.00),
+        "gpt-5.6-sol": Price(4.00, 20.00, 0.40, 5.00, 8.00, 30.00, 0.80, 10.00),
+        "gpt-5.6-terra": Price(2.00, 12.00, 0.20, 2.50, 4.00, 18.00, 0.40, 5.00),
+        "gpt-5.6-luna": Price(0.20, 1.20, 0.02, 0.25, 0.40, 1.80, 0.04, 0.50),
+        "gpt-5.5": Price(5.00, 30.00, 0.50, None, 10.00, 45.00, 1.00, None),
+        "gpt-5.5-pro": Price(30.00, 180.00, None, None, 60.00, 270.00, None, None),
+        "gpt-5.4": Price(2.50, 15.00, 0.25, None, 5.00, 22.50, 0.50, None),
+        "gpt-5.4-pro": Price(30.00, 180.00, None, None, 60.00, 270.00, None, None),
+        # Not on the current published price list. These rates are from an earlier one and
+        # are unverified; treat any figure derived from them as indicative.
+        "gpt-5": Price(1.25, 10.00, 0.125),
+        "gpt-5-mini": Price(0.25, 2.00, 0.025),
+        "gpt-5-nano": Price(0.05, 0.40, 0.005),
     },
     "anthropic": {
-        "claude-fable-5-1": (10.00, 50.00),
-        "claude-fable-5": (10.00, 50.00),
-        "claude-opus-5": (5.00, 25.00),
-        "claude-opus-4-8": (5.00, 25.00),
-        "claude-sonnet-5": (2.00, 10.00),
-        "claude-haiku-4-5": (1.00, 5.00),
+        "claude-fable-5-1": Price(10.00, 50.00),
+        "claude-fable-5": Price(10.00, 50.00),
+        "claude-opus-5": Price(5.00, 25.00, cache_write=6.25),
+        "claude-opus-4-8": Price(5.00, 25.00, cache_write=6.25),
+        "claude-sonnet-5": Price(2.00, 10.00, cache_write=2.50),
+        "claude-haiku-4-5": Price(1.00, 5.00, cache_write=1.25),
     },
 }
 
@@ -332,14 +381,21 @@ def estimate_cost(
     cache_read_tokens: int = 0,
     cache_write_tokens: int = 0,
 ) -> float | None:
-    """USD for a token profile, or None when the model's price is not known."""
-    price = price_override() or provider.pricing(model)
+    """USD for a token profile, or None when the model's price is not known.
+
+    Cached input and cache writes are billed at their own published rates, which differ by
+    model — on some, a cache write costs nothing; on others it is a premium over fresh input.
+    """
+    override = price_override()
+    price = Price(*override) if override else provider.pricing(model)
     if price is None:
         return None
-    per_in, per_out = price
+    per_in, per_cached, per_write, per_out = price.at(
+        input_tokens + cache_read_tokens + cache_write_tokens
+    )
     return (
         input_tokens * per_in
-        + cache_read_tokens * per_in * provider.cache_read_multiplier
-        + cache_write_tokens * per_in * provider.cache_write_multiplier
+        + cache_read_tokens * per_cached
+        + cache_write_tokens * per_write
         + output_tokens * per_out
     ) / 1_000_000

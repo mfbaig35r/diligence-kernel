@@ -46,6 +46,27 @@ Two consequences worth knowing:
 A model absent from the built-in price table reports cost as unknown rather than being
 priced from a guess. `DILIGENCE_KERNEL_PRICE_IN` / `_OUT` price it.
 
+## 2b. Concurrency runs inside a stage, never across one
+
+A topological stage is by definition a set of columns with no dependency on each other, so
+they are filled together and the run waits at the boundary. 338 of 591 columns are stage 1,
+so this covers most of the work. Measured on Table 05: **1.3–6.3 cells/min sequential,
+~12/min at concurrency 6**, and the sequential run degraded over time while the concurrent
+one held steady.
+
+Two details the naive version gets wrong:
+
+- **The first call of a unit runs alone.** Firing a whole stage at once means every request
+  misses the prompt cache, because nothing has populated it yet. One serial call writes the
+  prefix; the rest of the stage reads it.
+- **Only model calls leave the calling thread.** Every database read happens in `_prepare`
+  beforehand and every write after the stage completes, so SQLite sees one writer and cell
+  ordering stays deterministic. Tests assert that concurrency 1 and 8 produce identical cells.
+
+Sequential execution also appeared to defeat the prompt cache: a unit's 20 columns took over
+12 minutes to fill, which is long enough for the cached prefix to expire, so later columns
+re-paid for the whole document. Cache tokens are now recorded per cell rather than inferred.
+
 ## 3. Verbatim columns take a different retrieval path
 
 `00a`: "The entire spot-check design rests on this." A clause split across a chunk boundary

@@ -160,12 +160,24 @@ switching is one environment variable.
 export DILIGENCE_KERNEL_PROVIDER=openai        # or anthropic
 export DILIGENCE_KERNEL_MODEL=gpt-5            # default: gpt-5
 export DILIGENCE_KERNEL_EFFORT=medium          # low | medium | high | xhigh | max
+export DILIGENCE_KERNEL_CONCURRENCY=6          # model calls in flight, within a stage
 ```
 
-The default is `gpt-5` because its price and behaviour can be stated. Newer models the SDK
-knows about — `gpt-5.4`, `gpt-5.5`, `gpt-6-astra` and the rest — work by setting
-`DILIGENCE_KERNEL_MODEL`. Anything absent from the built-in price table reports its cost as
-unknown rather than guessing; price it yourself with:
+Columns of the same stage are filled concurrently and the run waits at each stage boundary,
+so a downstream prompt always sees its upstream answers. 338 of the 591 columns are stage 1.
+The first call of each unit runs alone to populate the prompt cache; firing a whole stage at
+once would make every request miss it.
+
+The default is `gpt-5.4`. Cost is modelled from the published rates: cached input at a tenth
+of fresh, cache writes at each model's own rate (free on `gpt-5.4` and `gpt-5.5`, a premium on
+the `gpt-5.6` family), and the long-context tier at roughly double above ~128k tokens.
+
+Output dominates this workload — a cell spends ~1,145 output tokens against ~693 fresh input
+— so the output rate is what you are really choosing between. The spread is wide:
+`gpt-5.6-luna` runs the same work for about a twelfth of `gpt-5.4`.
+
+Anything absent from the built-in price table reports its cost as unknown rather than
+guessing; price it yourself with:
 
 ```bash
 export DILIGENCE_KERNEL_PRICE_IN=1.25          # USD per million input tokens
