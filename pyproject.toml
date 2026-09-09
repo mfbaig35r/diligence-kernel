@@ -14,13 +14,15 @@ dependencies = [
     "mcp>=2.0.0",
     "pydantic>=2.0",
     "distillcore>=0.8.1",
-    "anthropic>=0.40.0",
+    "openai>=1.60.0",
+    "tiktoken>=0.7.0",
 ]
 
 [project.optional-dependencies]
 pdf = ["distillcore[pdf]"]
 docx = ["distillcore[docx]"]
 local = ["distillcore[local]"]
+anthropic = ["anthropic>=0.40.0"]
 all = ["distillcore[pdf,docx,html,excel,local]"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "ruff>=0.8"]
 

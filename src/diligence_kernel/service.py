@@ -279,12 +279,19 @@ def run_table(
     refill: bool = False,
     reason: str | None = None,
     model: str | None = None,
+    provider: str | None = None,
     filler: Any = None,
 ) -> dict[str, Any]:
-    from .engine.llm import DEFAULT_MODEL
+    from .engine.llm import CellFiller
+    from .engine.providers import ProviderUnavailable
 
     scope = RunScope(unit_ids=unit_ids, column_names=columns, reason=reason, refill=refill)
-    chosen = model or os.environ.get("DILIGENCE_KERNEL_MODEL", DEFAULT_MODEL)
+    if filler is None:
+        try:
+            filler = CellFiller(provider=provider, model=model)
+        except ProviderUnavailable as exc:
+            raise KernelError(str(exc)) from exc
+    chosen = getattr(filler, "model", model or "unknown")
     run_id = create_run(conn, table, scope, model=chosen)
     summary, findings = execute_run(conn, run_id, filler=filler)
     if table == classify_mod.INTAKE_TABLE and summary["status"] == "complete":
@@ -302,15 +309,21 @@ def run_estimate(
     columns: list[str] | None = None,
     refill: bool = False,
     model: str | None = None,
+    provider: str | None = None,
 ) -> dict[str, Any]:
-    """What a run would cost, without running it. Token counting is free."""
-    from .engine.llm import DEFAULT_MODEL, count_request_tokens, estimate_cost
+    """What a run would cost, without running it."""
+    from .engine.llm import CellFiller
+    from .engine.providers import ProviderUnavailable, estimate_cost
     from .engine.runner import preview_run
 
-    chosen = model or os.environ.get("DILIGENCE_KERNEL_MODEL", DEFAULT_MODEL)
-    scope = RunScope(unit_ids=unit_ids, column_names=columns, refill=refill)
-    requests = preview_run(conn, table, scope)
     findings: list[Finding] = []
+    try:
+        filler = CellFiller(provider=provider, model=model)
+    except ProviderUnavailable as exc:
+        raise KernelError(str(exc)) from exc
+
+    scope = RunScope(unit_ids=unit_ids, column_names=columns, refill=refill)
+    requests = preview_run(conn, table, scope, filler=filler)
     if not requests:
         findings.append(
             Finding(
@@ -330,15 +343,13 @@ def run_estimate(
     counted: list[int] = []
     exact = True
     try:
-        import anthropic
-
-        client = anthropic.Anthropic()
-        counted = [count_request_tokens(client, chosen, r["system"], r["user"]) for r in requests]
+        for r in requests:
+            n, is_exact = filler.count(r["request"], system=r["system"])
+            counted.append(n)
+            exact = exact and is_exact
     except Exception as exc:
         exact = False
-        counted = [
-            (len(r["user"]) + sum(len(b["text"]) for b in r["system"])) // 4 for r in requests
-        ]
+        counted = [(len(r["user"]) + len(r["system"])) // 4 for r in requests]
         findings.append(
             Finding(
                 code="TOKENS_ESTIMATED_NOT_COUNTED",
@@ -346,10 +357,10 @@ def run_estimate(
                 subject_id=None,
                 subject_name=f"Table {table}",
                 observation=(
-                    "The token-counting endpoint was unreachable, so the figures are a "
-                    f"character-based approximation: {exc}"
+                    "Tokens could not be counted, so the figures are a character-based "
+                    f"approximation: {exc}"
                 ),
-                evidence={"model": chosen},
+                evidence={"model": filler.model, "provider": filler.provider.name},
             )
         )
 
@@ -358,24 +369,79 @@ def run_estimate(
     plain = sum(c for c, r in zip(counted, requests, strict=True) if r["cache_role"] == "none")
     est_out = 200 * len(requests)
 
+    # A prefix below the provider's minimum is never cached, so do not price it as if it were.
+    per_unit = {}
+    for c, r in zip(counted, requests, strict=True):
+        if r["cache_role"] == "write":
+            per_unit[r["unit_id"]] = c
+    too_small = [u for u, n in per_unit.items() if n < filler.provider.min_cacheable_tokens]
+    if too_small:
+        findings.append(
+            Finding(
+                code="PREFIX_BELOW_CACHE_MINIMUM",
+                subject_type="table",
+                subject_id=None,
+                subject_name=f"Table {table}",
+                observation=(
+                    f"{len(too_small)} of {len(per_unit)} rows have a prefix shorter than "
+                    f"{filler.provider.min_cacheable_tokens} tokens, which {filler.provider.name} "
+                    "does not cache; those rows are priced without the discount."
+                ),
+                evidence={"rows_below_minimum": len(too_small)},
+            )
+        )
+        moved = sum(
+            c
+            for c, r in zip(counted, requests, strict=True)
+            if r["unit_id"] in too_small and r["cache_role"] in {"read", "write"}
+        )
+        plain += moved
+        read -= sum(
+            c
+            for c, r in zip(counted, requests, strict=True)
+            if r["unit_id"] in too_small and r["cache_role"] == "read"
+        )
+        write -= sum(
+            c
+            for c, r in zip(counted, requests, strict=True)
+            if r["unit_id"] in too_small and r["cache_role"] == "write"
+        )
+
     cost = estimate_cost(
-        chosen,
+        filler.provider,
+        filler.model,
         input_tokens=plain,
         output_tokens=est_out,
-        cache_read_tokens=read,
-        cache_write_tokens=write,
+        cache_read_tokens=max(0, read),
+        cache_write_tokens=max(0, write),
     )
-    uncached = estimate_cost(chosen, input_tokens=sum(counted), output_tokens=est_out)
-    units = len({r["unit_id"] for r in requests})
+    uncached = estimate_cost(
+        filler.provider, filler.model, input_tokens=sum(counted), output_tokens=est_out
+    )
+    if cost is None:
+        findings.append(
+            Finding(
+                code="MODEL_PRICE_UNKNOWN",
+                subject_type="table",
+                subject_id=None,
+                subject_name=filler.model,
+                observation=(
+                    f"No price is recorded for {filler.model!r}; set DILIGENCE_KERNEL_PRICE_IN and "
+                    "DILIGENCE_KERNEL_PRICE_OUT (USD per million tokens) to price it."
+                ),
+                evidence={"provider": filler.provider.name, "model": filler.model},
+            )
+        )
     return result(
         findings,
         table=table,
-        model=chosen,
+        provider=filler.provider.name,
+        model=filler.model,
         cells=len(requests),
-        rows=units,
+        rows=len({r["unit_id"] for r in requests}),
         input_tokens=sum(counted),
         estimated_output_tokens=est_out,
-        cached_input_tokens=read,
+        cached_input_tokens=max(0, read),
         token_counts_exact=exact,
         estimated_cost_usd=None if cost is None else round(cost, 4),
         estimated_cost_without_caching_usd=None if uncached is None else round(uncached, 4),

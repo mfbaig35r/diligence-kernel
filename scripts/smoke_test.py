@@ -23,7 +23,8 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
 from diligence_kernel import db, service  # noqa: E402
-from diligence_kernel.engine import llm as llm_mod  # noqa: E402
+from diligence_kernel.engine.llm import CellFiller  # noqa: E402
+from diligence_kernel.engine.providers import ProviderUnavailable, estimate_cost  # noqa: E402
 from diligence_kernel.engine.runner import RunScope, preview_run  # noqa: E402
 from diligence_kernel.vault.ingest import ingest_path  # noqa: E402
 from diligence_kernel.vault.units import assemble_units  # noqa: E402
@@ -70,6 +71,7 @@ def main() -> int:
         default=str(REPO / "tests" / "fixtures" / "dataroom"),
         help="Directory to ingest (default: the three fixture agreements).",
     )
+    parser.add_argument("--provider", default=None, help="openai (default) or anthropic.")
     parser.add_argument("--model", default=None, help="Override the model.")
     parser.add_argument("--effort", default=None, help="low | medium | high | xhigh | max.")
     parser.add_argument("--keep", action="store_true", help="Keep the temporary database.")
@@ -77,7 +79,12 @@ def main() -> int:
 
     workdir = Path(tempfile.mkdtemp(prefix="dk-smoke-"))
     conn = db.connect(workdir / "smoke.db")
-    model = args.model or llm_mod.DEFAULT_MODEL
+    try:
+        filler = CellFiller(provider=args.provider, model=args.model, effort=args.effort)
+    except ProviderUnavailable as exc:
+        say(f"{RED}✗{RESET} {exc}")
+        return 2
+    model = filler.model
 
     try:
         # -- 1. corpus ------------------------------------------------------------------
@@ -105,7 +112,7 @@ def main() -> int:
 
         # -- 3. plan --------------------------------------------------------------------
         rule("3. Plan")
-        all_requests = preview_run(conn, args.table, RunScope())
+        all_requests = preview_run(conn, args.table, RunScope(), filler=filler)
         if not all_requests:
             say(f"  {RED}✗{RESET} Table {args.table} has no rows in scope")
             if args.table != "05":
@@ -120,60 +127,77 @@ def main() -> int:
         first_unit = all_requests[0]["unit_id"]
         columns = [r["column"] for r in all_requests if r["unit_id"] == first_unit][: args.columns]
         scope = RunScope(unit_ids=[first_unit], column_names=columns, reason="smoke test")
-        requests = preview_run(conn, args.table, scope)
+        requests = preview_run(conn, args.table, scope, filler=filler)
 
         if len(requests) > MAX_CELLS:
             say(f"  {RED}✗{RESET} {len(requests)} cells exceeds the smoke-test cap of {MAX_CELLS}")
             return 1
         say(f"  Table {args.table}, one row: {DIM}{all_requests[0]['unit']}{RESET}")
         say(f"  {len(requests)} cells — {', '.join(columns)}")
+        say(
+            f"  provider {BOLD}{filler.provider.name}{RESET}, model {BOLD}{model}{RESET}, "
+            f"effort {filler.effort}"
+        )
 
         # -- 4. estimate (free) -----------------------------------------------------------
         rule("4. Cost estimate")
         try:
-            import anthropic
-
-            client = anthropic.Anthropic()
-            counted = [
-                llm_mod.count_request_tokens(client, model, r["system"], r["user"])
-                for r in requests
-            ]
+            counted, exact = [], True
+            for r in requests:
+                n, is_exact = filler.count(r["request"], system=r["system"])
+                counted.append(n)
+                exact = exact and is_exact
         except Exception as exc:
-            say(f"  {RED}✗{RESET} could not reach the API: {exc}")
-            say(f"\n  {DIM}The SDK resolves credentials in this order:{RESET}")
+            say(f"  {RED}✗{RESET} could not count tokens: {exc}")
             say(
-                f"  {DIM}ANTHROPIC_API_KEY → ANTHROPIC_AUTH_TOKEN → an `ant auth login` profile.{RESET}"
+                f"\n  {DIM}For openai set OPENAI_API_KEY; for anthropic set ANTHROPIC_API_KEY{RESET}"
             )
-            say(f"  {DIM}Set one, then run this again.{RESET}")
+            say(f"  {DIM}(or ANTHROPIC_AUTH_TOKEN, or an `ant auth login` profile).{RESET}")
             return 2
 
-        say(f"  {GREEN}✓{RESET} credentials resolved, token counting reachable")
+        say(
+            f"  {GREEN}✓{RESET} {len(counted)} requests counted"
+            f"{'' if exact else DIM + ' (locally, so approximate)' + RESET}"
+        )
 
-        # The first column of a unit writes the cached prefix; the rest read it.
-        fresh = [c for c, r in zip(counted, requests, strict=True) if r["cache_role"] != "read"]
-        cached = [c for c, r in zip(counted, requests, strict=True) if r["cache_role"] == "read"]
+        prefix_tokens = next(
+            (c for c, r in zip(counted, requests, strict=True) if r["cache_role"] == "write"), 0
+        )
+        cacheable = prefix_tokens >= filler.provider.min_cacheable_tokens
+        cached = (
+            sum(c for c, r in zip(counted, requests, strict=True) if r["cache_role"] == "read")
+            if cacheable
+            else 0
+        )
+        fresh = sum(counted) - cached
         est_out = 200 * len(requests)
-        cost = llm_mod.estimate_cost(
+        cost = estimate_cost(
+            filler.provider,
             model,
-            input_tokens=sum(fresh) if not cached else 0,
+            input_tokens=fresh,
             output_tokens=est_out,
-            cache_read_tokens=sum(cached),
-            cache_write_tokens=sum(fresh) if cached else 0,
+            cache_read_tokens=cached,
         )
         say(f"  input:  {sum(counted):,} tokens across {len(requests)} cells")
-        if cached:
+        if cacheable:
+            say(f"  {DIM}of which {cached:,} served from the cached unit prefix{RESET}")
+        else:
             say(
-                f"  {DIM}of which {sum(cached):,} should be served from cache after the first cell{RESET}"
+                f"  {YELLOW}!{RESET} the unit prefix is {prefix_tokens:,} tokens, below the "
+                f"{filler.provider.min_cacheable_tokens:,}-token minimum,"
             )
+            say(
+                f"      {DIM}so {filler.provider.name} will not cache it. These fixture documents{RESET}"
+            )
+            say(f"      {DIM}are too small to show the caching win; real ones will.{RESET}")
         say(f"  output: ~{est_out:,} tokens estimated")
-        say(f"  model:  {model}")
         say(
             f"  {BOLD}cost:   {f'${cost:.4f}' if cost is not None else 'unknown for this model'}{RESET}"
         )
-
-        naive = llm_mod.estimate_cost(model, input_tokens=sum(counted), output_tokens=est_out)
-        if cost is not None and naive is not None and naive > cost:
-            say(f"  {DIM}without the cached unit prefix this would be ${naive:.4f}{RESET}")
+        if cost is None:
+            say(
+                f"  {DIM}Set DILIGENCE_KERNEL_PRICE_IN / _OUT (USD per million) to price it.{RESET}"
+            )
 
         if not args.run:
             say(
@@ -203,8 +227,11 @@ def main() -> int:
             f"{out['cells_failed']} failed"
         )
         say(f"  tokens in {out['input_tokens']:,} / out {out['output_tokens']:,}")
-        actual = llm_mod.estimate_cost(
-            model, input_tokens=out["input_tokens"], output_tokens=out["output_tokens"]
+        actual = estimate_cost(
+            filler.provider,
+            model,
+            input_tokens=out["input_tokens"],
+            output_tokens=out["output_tokens"],
         )
         if actual is not None:
             say(f"  {DIM}billed roughly ${actual:.4f} (excludes the cache discount){RESET}")

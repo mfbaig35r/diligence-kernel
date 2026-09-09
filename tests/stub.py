@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from diligence_kernel.engine.llm import CellAnswer, CellRequest, Usage
+from diligence_kernel.engine.llm import CellAnswer, CellFiller, CellRequest
+from diligence_kernel.engine.providers import PromptPrefix, Usage
 
 #: Column name -> (value, evidence quotes). Anything unlisted returns `Not addressed`.
 SCRIPT: dict[str, tuple[str, list[str]]] = {
@@ -26,33 +27,38 @@ SCRIPT: dict[str, tuple[str, list[str]]] = {
 }
 
 
-class StubFiller:
-    """Implements the CellFiller surface the runner uses."""
+class StubProvider:
+    """Implements the Provider surface the filler and estimator use."""
+
+    name = "stub"
+    default_model = "stub-1"
+    default_effort = "medium"
+    cache_read_multiplier = 0.1
+    cache_write_multiplier = 1.0
+    min_cacheable_tokens = 0
+
+    def pricing(self, model: str) -> tuple[float, float] | None:
+        return (1.0, 4.0)
+
+
+class StubFiller(CellFiller):
+    """A CellFiller that answers from a script instead of calling a provider."""
 
     def __init__(self, script: dict[str, tuple[str, list[str]]] | None = None) -> None:
+        self.provider = StubProvider()  # type: ignore[assignment]
+        self.model = "stub-1"
+        self.effort = "medium"
+        self.max_tokens = 4096
         self.script = script if script is not None else SCRIPT
         self.calls: list[CellRequest] = []
-        self.systems: list[list[dict]] = []
-        self.model = "stub"
-        self.effort = "n/a"
+        self.systems: list[PromptPrefix] = []
 
-    def build_system(self, *, table_instructions: str, unit_label: str, evidence_blocks):
-        from diligence_kernel.engine.llm import CellFiller
-
-        return CellFiller.build_system(
-            self,  # type: ignore[arg-type]
-            table_instructions=table_instructions,
-            unit_label=unit_label,
-            evidence_blocks=evidence_blocks,
-        )
-
-    def build_user(self, request: CellRequest) -> str:
-        from diligence_kernel.engine.llm import CellFiller
-
-        return CellFiller.build_user(self, request)  # type: ignore[arg-type]
-
-    def fill(self, request: CellRequest, *, system):
+    def fill(self, request: CellRequest, *, system: PromptPrefix) -> tuple[CellAnswer, Usage]:
         self.calls.append(request)
         self.systems.append(system)
         value, evidence = self.script.get(request.column_name, ("Not addressed", []))
-        return CellAnswer(value=value, evidence=evidence), Usage(input_tokens=100, output_tokens=10)
+        answer = CellAnswer(value=value, evidence=evidence, source_document=None)
+        return answer, Usage(input_tokens=100, output_tokens=10)
+
+    def count(self, request: CellRequest, *, system: PromptPrefix) -> tuple[int, bool]:
+        return (len(system.text) + len(self.build_user(request))) // 4, False

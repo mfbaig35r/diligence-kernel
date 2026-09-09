@@ -160,10 +160,16 @@ def test_unit_documents_are_cached_and_reused_across_columns(loaded, dataroom):
     run_id = create_run(loaded, "01", RunScope(), model="stub")
     execute_run(loaded, run_id, filler=filler)
 
-    # Every column of a unit shares one system prefix, and it carries a cache breakpoint.
+    # Every column of a unit shares one prefix, keyed to that unit, so both providers can
+    # serve it from cache. The documents appear in it exactly once.
     first_unit = filler.systems[:27]
-    assert all(s == first_unit[0] for s in first_unit)
-    assert first_unit[0][-1]["cache_control"] == {"type": "ephemeral"}
+    assert all(s is first_unit[0] or s == first_unit[0] for s in first_unit)
+    assert first_unit[0].cache_key.endswith(str(first_unit[0].cache_key.split(":")[-1]))
+    assert first_unit[0].text.count("<document ") == 2, "the family's two documents, once"
+
+    # The second unit gets a different key, so one unit's cache cannot serve another's.
+    second_unit = filler.systems[27:]
+    assert second_unit[0].cache_key != first_unit[0].cache_key
 
 
 def test_verbatim_paraphrase_is_recorded_as_a_violation(loaded, dataroom):

@@ -204,6 +204,10 @@ def run_table(
     refill: Annotated[bool, Field(description="Re-fill cells that already carry a value.")] = False,
     reason: Annotated[str | None, Field(description="Why this run exists, for the record.")] = None,
     model: Annotated[str | None, Field(description="Override the model for this run.")] = None,
+    provider: Annotated[
+        str | None,
+        Field(description="'openai' or 'anthropic'. Defaults to DILIGENCE_KERNEL_PROVIDER."),
+    ] = None,
 ) -> dict[str, Any]:
     """Fill a review table's cells, in dependency order, from the documents in each row.
 
@@ -239,6 +243,7 @@ def run_estimate(
     ] = None,
     refill: Annotated[bool, Field(description="Include cells that already carry a value.")] = False,
     model: Annotated[str | None, Field(description="Price against this model instead.")] = None,
+    provider: Annotated[str | None, Field(description="'openai' or 'anthropic'.")] = None,
 ) -> dict[str, Any]:
     """Report what run_table would cost, without running it or spending anything.
 
@@ -249,7 +254,13 @@ def run_estimate(
     Call this before any run over more than a handful of rows.
     """
     return service.run_estimate(
-        get_conn(), table, unit_ids=unit_ids, columns=columns, refill=refill, model=model
+        get_conn(),
+        table,
+        unit_ids=unit_ids,
+        columns=columns,
+        refill=refill,
+        model=model,
+        provider=provider,
     )
 
 

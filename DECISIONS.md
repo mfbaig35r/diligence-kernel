@@ -24,6 +24,28 @@ answers as established results; filling out of order would feed a prompt an empt
 Stage is computed from the union of each column's declared `Upstream` and the `@Column`
 references detected in its prompt text.
 
+## 2a. Providers sit behind one interface, OpenAI by default
+
+The engine makes exactly one kind of call, so the provider surface is small: a cached
+prefix, a varying instruction, a schema. What differs is only how the cache is addressed.
+OpenAI caches input prefixes automatically above a minimum length and `prompt_cache_key`
+routes identical prefixes to one cache; Anthropic caches only at an explicit
+`cache_control` breakpoint. Decision 2 is unchanged by either — stable content first,
+volatile last, is what both reward.
+
+Two consequences worth knowing:
+
+- **OpenAI estimates need no credentials.** tiktoken counts locally, so `run_estimate` works
+  offline. Anthropic's count is exact but needs a network call, so its estimates degrade to
+  a character approximation without a key.
+- **Structured outputs made every field of `CellAnswer` required.** OpenAI strict mode
+  requires it; an optional field becomes required-and-nullable. That is stricter than what
+  Anthropic needed and is the better contract anyway — the model must state a source
+  document or explicitly say there is none.
+
+A model absent from the built-in price table reports cost as unknown rather than being
+priced from a guess. `DILIGENCE_KERNEL_PRICE_IN` / `_OUT` price it.
+
 ## 3. Verbatim columns take a different retrieval path
 
 `00a`: "The entire spot-check design rests on this." A clause split across a chunk boundary
@@ -68,9 +90,14 @@ where their answers live, and a run never overwrites a verified, corrected, or l
 
 ## Open
 
-- **The live model path is unverified.** `messages.parse` is called with `output_format`,
-  `output_config`, and a cached system prefix; the shapes match the installed SDK, but no
-  request has been made against the API. The first real run is a smoke test, not a batch.
+- **The live model path is unverified on both providers.** The request shapes match the
+  installed SDKs (`responses.parse` with `text_format`; `messages.parse` with
+  `output_format`), and the whole pipeline passes against a stub, but no request has been
+  made against either API. The first real run is a smoke test, not a batch.
+- **Cost per cell is known only for fixture-sized documents.** The estimate on the three
+  fixture agreements is ~$0.0023 a cell on `gpt-5`. Real diligence documents are ten to
+  fifty times larger, and the prefix is the bulk of a request, so a real matter scales up
+  from that number rather than matching it.
 - **Table 05's document-type vocabulary is ~180 values.** `00a` section 8 flags this as
   deciding whether the column is Classify or Free Response. The corpus currently calls it
   Free Response, so the engine does not constrain it.

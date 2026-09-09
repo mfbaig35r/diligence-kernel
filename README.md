@@ -67,11 +67,36 @@ artifact_build("consent_schedule")                       # a filter, not a fresh
 Build order is `00a` section 12: start at 05, then 06, then 01, and stop when the matter is
 covered. `table_describe` reports the pairs that must be built together.
 
+## Providers
+
+OpenAI by default; Anthropic behind the same interface. Both make the identical call — a
+cached prefix, a short varying instruction, and a schema the answer must satisfy — so
+switching is one environment variable.
+
+```bash
+export DILIGENCE_KERNEL_PROVIDER=openai        # or anthropic
+export DILIGENCE_KERNEL_MODEL=gpt-5            # default: gpt-5
+export DILIGENCE_KERNEL_EFFORT=medium          # low | medium | high | xhigh | max
+```
+
+The default is `gpt-5` because its price and behaviour can be stated. Newer models the SDK
+knows about — `gpt-5.4`, `gpt-5.5`, `gpt-6-astra` and the rest — work by setting
+`DILIGENCE_KERNEL_MODEL`. Anything absent from the built-in price table reports its cost as
+unknown rather than guessing; price it yourself with:
+
+```bash
+export DILIGENCE_KERNEL_PRICE_IN=1.25          # USD per million input tokens
+export DILIGENCE_KERNEL_PRICE_OUT=10.00        # USD per million output tokens
+```
+
+On OpenAI, `run_estimate` needs no credentials and no network — tiktoken counts locally.
+
 ## Install
 
 ```bash
 uv venv .venv
-uv pip install --python .venv/bin/python -e ".[dev,all]"
+uv pip install --python .venv/bin/python -e ".[dev,all]"      # OpenAI
+uv pip install --python .venv/bin/python -e ".[dev,anthropic]" # adds Anthropic
 ```
 
 ## Smoke test
@@ -100,7 +125,7 @@ One matter is one database file.
 claude mcp add diligence-kernel \
   -e DILIGENCE_KERNEL_DB=/absolute/path/to/matters/acme.db \
   -e DILIGENCE_KERNEL_CORPUS=/absolute/path/to/review-table-prompts \
-  -e ANTHROPIC_API_KEY=... \
+  -e OPENAI_API_KEY=... \
   -- /absolute/path/to/diligence-kernel/.venv/bin/diligence-kernel
 ```
 

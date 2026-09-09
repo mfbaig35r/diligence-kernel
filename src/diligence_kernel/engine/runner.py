@@ -24,7 +24,8 @@ from ..constants import SPAN_EXACT_TYPES
 from ..db import now
 from ..findings import Finding, KernelError
 from ..vault import search
-from .llm import CellFiller, CellRequest, Usage
+from .llm import CellFiller, CellRequest
+from .providers import Usage
 from .validate import validate_cell, validate_verbatim
 
 #: A unit whose documents fit in this many characters goes into the cached prefix whole.
@@ -148,6 +149,7 @@ def execute_run(
                 table_instructions=table["table_instructions"] or "",
                 unit_label=unit["label"],
                 evidence_blocks=blocks,
+                cache_key=f"{table['number']}:{unit_id}",
             )
             sources = [str(b.get("text", "")) for b in blocks]
 
@@ -194,6 +196,7 @@ def execute_run(
                         table_instructions=table["table_instructions"] or "",
                         unit_label=unit["label"],
                         evidence_blocks=retrieved,
+                        cache_key=f"{table['number']}:{unit_id}:{column['name']}",
                     )
                     per_column_sources = [p.text for p in passages]
 
@@ -306,6 +309,7 @@ def preview_run(
             table_instructions=table["table_instructions"] or "",
             unit_label=unit["label"],
             evidence_blocks=blocks,
+            cache_key=f"{table['number']}:{unit_id}",
         )
         for index, column in enumerate(columns):
             column_id = int(column["id"])
@@ -334,6 +338,7 @@ def preview_run(
                     "native_type": column["native_type"],
                     "stage": column["stage"],
                     "system": system,
+                    "request": request,
                     "user": filler.build_user(request),
                     # Only the first column of a unit pays to write the prefix into cache;
                     # the rest read it. `whole` says the unit's documents are in that prefix.

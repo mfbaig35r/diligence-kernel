@@ -1,13 +1,14 @@
-"""The model call that fills one cell.
+"""The model call that fills one cell, independent of which provider makes it.
 
 Structure of a request, and why:
 
-    system   = [ Table Instructions (cached) , the review unit's evidence (cached) ]
-    messages = [ established upstream results + the column prompt ]
+    prefix = the cell contract + the table's Table Instructions + the review unit's documents
+    user   = established upstream results + the column prompt
 
-The unit's documents are the bulk of the tokens and are identical for every column of
-that unit, so they go in the cached prefix and the engine iterates unit-major. A 27-column
-table then pays for its documents once per unit instead of 27 times.
+The unit's documents are the bulk of the tokens and are identical for every column of that
+unit, so they go in the prefix and the engine iterates unit-major. A 27-column table then
+pays for its documents once per unit instead of 27 times. Both providers cache a stable
+prefix; `providers.py` handles how each one is told to.
 
 The column prompt goes last because 00a section 6 orders a prompt so the final instruction
 is the output contract.
@@ -17,12 +18,18 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Any
 
 from pydantic import BaseModel, Field
 
-DEFAULT_MODEL = "claude-opus-5"
-DEFAULT_EFFORT = "high"
+from .providers import (  # noqa: F401  (re-exported for callers)
+    PromptPrefix,
+    Provider,
+    ProviderUnavailable,
+    Usage,
+    estimate_cost,
+    get_provider,
+)
+
 DEFAULT_MAX_TOKENS = 4096
 
 #: 00a's shared rules, restated as the operator contract for a cell.
@@ -56,28 +63,13 @@ class CellAnswer(BaseModel):
         "stated, a short answer, or one of the fallback states."
     )
     evidence: list[str] = Field(
-        default_factory=list,
         description="Sentences quoted verbatim from the documents in this review unit that "
         "support the value. Empty when the documents are silent.",
     )
     source_document: str | None = Field(
-        default=None,
-        description="Printed title or filename of the document the value was read from.",
+        description="Printed title or filename of the document the value was read from, or "
+        "null when no single document supplied it.",
     )
-
-
-@dataclass(slots=True)
-class Usage:
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cache_read_tokens: int = 0
-    cache_write_tokens: int = 0
-
-    def add(self, other: Usage) -> None:
-        self.input_tokens += other.input_tokens
-        self.output_tokens += other.output_tokens
-        self.cache_read_tokens += other.cache_read_tokens
-        self.cache_write_tokens += other.cache_write_tokens
 
 
 @dataclass(slots=True)
@@ -89,35 +81,23 @@ class CellRequest:
     established: dict[str, str] = field(default_factory=dict)
 
 
-class LLMUnavailable(RuntimeError):
-    """No API credentials, or the SDK is not installed."""
-
-
 class CellFiller:
-    """Fills cells for one review unit, reusing that unit's cached evidence prefix."""
+    """Fills cells for one review unit, reusing that unit's cached prefix."""
 
     def __init__(
         self,
         *,
+        provider: Provider | str | None = None,
         model: str | None = None,
         effort: str | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
-        client: Any | None = None,
     ) -> None:
-        self.model = model or os.environ.get("DILIGENCE_KERNEL_MODEL", DEFAULT_MODEL)
-        self.effort = effort or os.environ.get("DILIGENCE_KERNEL_EFFORT", DEFAULT_EFFORT)
+        self.provider = provider if isinstance(provider, Provider) else get_provider(provider)
+        self.model = model or os.environ.get("DILIGENCE_KERNEL_MODEL", self.provider.default_model)
+        self.effort = effort or os.environ.get(
+            "DILIGENCE_KERNEL_EFFORT", self.provider.default_effort
+        )
         self.max_tokens = max_tokens
-        self._client = client
-
-    @property
-    def client(self) -> Any:
-        if self._client is None:
-            try:
-                import anthropic
-            except ImportError as exc:  # pragma: no cover - dependency is declared
-                raise LLMUnavailable("The anthropic SDK is not installed.") from exc
-            self._client = anthropic.Anthropic()
-        return self._client
 
     # -- prompt assembly ---------------------------------------------------------------
 
@@ -127,24 +107,19 @@ class CellFiller:
         table_instructions: str,
         unit_label: str,
         evidence_blocks: list[dict[str, object]],
-    ) -> list[dict[str, Any]]:
+        cache_key: str | None = None,
+    ) -> PromptPrefix:
         """The cached prefix: the contract, the table's instructions, and the unit."""
         documents = "\n\n".join(
             f"<document title={d.get('filename')!r} role={d.get('role') or 'unstated'!r}"
             f"{' truncated=true' if d.get('truncated') else ''}>\n{d.get('text', '')}\n</document>"
             for d in evidence_blocks
         )
-        head = CELL_CONTRACT
+        text = CELL_CONTRACT
         if table_instructions:
-            head += "\n\n## Table Instructions\n\n" + table_instructions
-        return [
-            {"type": "text", "text": head},
-            {
-                "type": "text",
-                "text": f"## Review unit: {unit_label}\n\n{documents}",
-                "cache_control": {"type": "ephemeral"},
-            },
-        ]
+            text += "\n\n## Table Instructions\n\n" + table_instructions
+        text += f"\n\n## Review unit: {unit_label}\n\n{documents}"
+        return PromptPrefix(text=text, cache_key=cache_key or unit_label)
 
     def build_user(self, request: CellRequest) -> str:
         parts: list[str] = []
@@ -162,87 +137,17 @@ class CellFiller:
 
     # -- the call ------------------------------------------------------------------------
 
-    def fill(
-        self,
-        request: CellRequest,
-        *,
-        system: list[dict[str, Any]],
-    ) -> tuple[CellAnswer, Usage]:
-        """One cell. Raises for transport errors; the SDK retries 429 and 5xx itself."""
-        kwargs: dict[str, Any] = {
-            "model": self.model,
-            "max_tokens": self.max_tokens,
-            "system": system,
-            "messages": [{"role": "user", "content": self.build_user(request)}],
-            "output_format": CellAnswer,
-            "output_config": {"effort": self.effort},
-        }
-        response = self.client.messages.parse(**kwargs)
-        usage = _usage_of(response)
-        answer = getattr(response, "parsed_output", None)
-        if answer is None:
-            raise RuntimeError(
-                f"The model returned no parsable answer for {request.column_name!r} "
-                f"(stop_reason={getattr(response, 'stop_reason', None)})."
-            )
-        return answer, usage
+    def fill(self, request: CellRequest, *, system: PromptPrefix) -> tuple[CellAnswer, Usage]:
+        """One cell. Raises for transport errors; the SDKs retry 429 and 5xx themselves."""
+        answer, usage = self.provider.complete(
+            prefix=system,
+            user=self.build_user(request),
+            schema=CellAnswer,
+            model=self.model,
+            effort=self.effort,
+            max_tokens=self.max_tokens,
+        )
+        return answer, usage  # type: ignore[return-value]
 
-
-def _usage_of(response: Any) -> Usage:
-    raw = getattr(response, "usage", None)
-    if raw is None:
-        return Usage()
-    return Usage(
-        input_tokens=getattr(raw, "input_tokens", 0) or 0,
-        output_tokens=getattr(raw, "output_tokens", 0) or 0,
-        cache_read_tokens=getattr(raw, "cache_read_input_tokens", 0) or 0,
-        cache_write_tokens=getattr(raw, "cache_creation_input_tokens", 0) or 0,
-    )
-
-
-#: USD per million tokens, (input, output). Cache reads bill at ~0.1x input, writes ~1.25x.
-MODEL_PRICING: dict[str, tuple[float, float]] = {
-    "claude-fable-5-1": (10.00, 50.00),
-    "claude-fable-5": (10.00, 50.00),
-    "claude-opus-5": (5.00, 25.00),
-    "claude-opus-4-8": (5.00, 25.00),
-    "claude-sonnet-5": (2.00, 10.00),
-    "claude-haiku-4-5": (1.00, 5.00),
-}
-CACHE_READ_MULTIPLIER = 0.1
-CACHE_WRITE_MULTIPLIER = 1.25
-
-
-def price_of(model: str) -> tuple[float, float] | None:
-    return MODEL_PRICING.get(model)
-
-
-def estimate_cost(
-    model: str,
-    *,
-    input_tokens: int,
-    output_tokens: int,
-    cache_read_tokens: int = 0,
-    cache_write_tokens: int = 0,
-) -> float | None:
-    """USD for a token profile, or None when the model's price is not known here."""
-    price = price_of(model)
-    if price is None:
-        return None
-    per_in, per_out = price
-    return (
-        input_tokens * per_in
-        + cache_read_tokens * per_in * CACHE_READ_MULTIPLIER
-        + cache_write_tokens * per_in * CACHE_WRITE_MULTIPLIER
-        + output_tokens * per_out
-    ) / 1_000_000
-
-
-def count_request_tokens(client: Any, model: str, system: list[dict[str, Any]], user: str) -> int:
-    """Input tokens for one cell request. The token-counting endpoint is free."""
-    counted = client.messages.count_tokens(
-        model=model,
-        system=system,
-        messages=[{"role": "user", "content": user}],
-    )
-    return int(getattr(counted, "input_tokens", 0) or 0)
+    def count(self, request: CellRequest, *, system: PromptPrefix) -> tuple[int, bool]:
+        return self.provider.count_tokens(self.model, system, self.build_user(request))
