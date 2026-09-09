@@ -67,9 +67,16 @@ def validate_cell(
         ]
 
     # --- 00a section 5: banned fallback synonyms ------------------------------------
+    #
+    # A value the column explicitly configures is its declared vocabulary, and is not flagged
+    # here even when 00a bans it. The defect in that case is the prompt, not the cell:
+    # flagging the cell produces one identical violation per row — nine in a ten-document
+    # matter, thousands in a real one — and a check that fires on correct answers stops being
+    # read. `corpus.lint` reports it once, against the column that causes it.
     lowered = text.lower()
+    configured = {o.strip().lower() for o in (configured_options or [])}
     for banned in BANNED_FALLBACKS:
-        if lowered == banned.lower():
+        if lowered == banned.lower() and lowered not in configured:
             violations.append(
                 Violation(
                     "BANNED_FALLBACK",
