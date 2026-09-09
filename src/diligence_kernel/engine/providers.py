@@ -92,7 +92,10 @@ class Provider(ABC):
 
 class OpenAIProvider(Provider):
     name = "openai"
-    default_model = "gpt-5.4"
+    # Measured on Table 05 over the fixture data room: gpt-5.6-luna scored identically to
+    # gpt-5.4 (30/34 each, zero disagreements either way) at a fifteenth of the cost. Raise
+    # the model per table where judgment matters more than classification does.
+    default_model = "gpt-5.6-luna"
     default_effort = "medium"
     cache_read_multiplier = 0.1
     cache_write_multiplier = 1.0

@@ -86,6 +86,25 @@ def matter_open(
     )
 
 
+def corpus_check(conn: sqlite3.Connection, *, table: str | None = None) -> dict[str, Any]:
+    """Audit the loaded prompts against the standards 00a sets for them."""
+    from .corpus.lint import lint_corpus
+
+    findings = lint_corpus(conn)
+    if table:
+        findings = [f for f in findings if str(f.subject_name).startswith(f"{table} ")]
+    counts: dict[str, int] = {}
+    for f in findings:
+        counts[f.code] = counts.get(f.code, 0) + 1
+    total = conn.execute("SELECT COUNT(*) AS n FROM column_def").fetchone()["n"]
+    return result(
+        findings,
+        columns_checked=total,
+        columns_with_findings=len({f.subject_name for f in findings}),
+        by_code=counts,
+    )
+
+
 def matter_parameters_set(
     conn: sqlite3.Connection, entities: list[dict[str, Any]], *, replace: bool = False
 ) -> dict[str, Any]:
