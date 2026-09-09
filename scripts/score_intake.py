@@ -35,19 +35,34 @@ GREEN, RED, YELLOW, DIM, BOLD, RESET = (
 )
 
 
-def matches(value: str, accepted: set) -> bool | None:
-    """True if right, False if wrong, None if the check needs a human eye."""
+def matches(value: str, accepted: set) -> bool:
+    """Whether a returned value satisfies the expectation.
+
+    Most expectations are exact alternatives. A few are sentinels, because the right answer is
+    a phrase rather than a fixed string — the point is whether the model named the thing, not
+    how it worded it.
+    """
     normalized = value.strip()
+    low = normalized.lower()
     if None in accepted and is_fallback(normalized):
         return True
     if "NAMES_THE_MSA" in accepted:
-        return "master services" in normalized.lower() or "2022" in normalized
+        return "master services" in low or "2022" in low
     if "NAMES_THE_LEASE" in accepted:
-        return "lease" in normalized.lower() or "2021" in normalized
+        return "lease" in low or "2021" in low
+    if "NAMES_THE_SIDE_LETTER" in accepted:
+        return "side letter" in low or "2023" in low
+    if "NAMES_PRIVILEGE" in accepted:
+        return "privileg" in low
+    if "NAMES_A_MISSING_DOCUMENT" in accepted:
+        # The email transmits an amendment and references a consent letter not produced.
+        return any(w in low for w in ("consent", "letter", "lease", "amendment"))
+    if "NAMES_ACME" in accepted:
+        # Reported as printed, which the column instructs, with or without a variant note.
+        return "acme manufacturing" in low
     if "COMPILATION" in accepted:
-        low = normalized.lower()
-        return "single" not in low
-    return any(a is not None and a.lower() == normalized.lower() for a in accepted)
+        return "single" not in low and not is_fallback(normalized)
+    return any(a is not None and a.lower() == low for a in accepted)
 
 
 def main() -> int:
