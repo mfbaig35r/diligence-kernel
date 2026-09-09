@@ -12,3 +12,6 @@ exports/
 .env
 matters/
 .idea/
+
+# The firm playbook lives in its own repository; see src/diligence_kernel/playbook.py
+playbook/

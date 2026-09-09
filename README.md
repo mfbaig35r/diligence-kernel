@@ -170,6 +170,18 @@ the suite looks like as a whole (`suite_check`), and to hold the evaluation log.
 Corpus linting lives there, not here. The kernel validates **answers** at execution time; it
 does not lint prompts.
 
+## The firm playbook
+
+Held in its own private repository — it carries the practice's methodology, which is a
+different class of material from the engine that runs it. The kernel reads it by path and runs
+perfectly well without it; the crosswalk is analysis, not runtime.
+
+```bash
+export DILIGENCE_KERNEL_PLAYBOOK=/absolute/path/to/diligence-playbook
+```
+
+See [the crosswalk](docs/playbook-crosswalk.md).
+
 ## Providers
 
 OpenAI by default; Anthropic behind the same interface. Both make the identical call — a

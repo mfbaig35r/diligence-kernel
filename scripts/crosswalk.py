@@ -36,7 +36,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
 from diligence_kernel import crosswalk as cw  # noqa: E402
-from diligence_kernel import db, env  # noqa: E402
+from diligence_kernel import db, env, playbook  # noqa: E402
 from diligence_kernel.corpus.loader import load_corpus  # noqa: E402
 from diligence_kernel.derive.artifacts import ARTIFACTS  # noqa: E402
 
@@ -170,7 +170,11 @@ def calibrate(columns: list[dict], vectors: dict) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--playbook", default="playbook/corporate-ma-3.4.json")
+    parser.add_argument(
+        "--playbook",
+        default=None,
+        help="Field inventory. Defaults to the DILIGENCE_KERNEL_PLAYBOOK checkout.",
+    )
     parser.add_argument("--calibrate", action="store_true")
     parser.add_argument("--threshold", type=float, default=cw.DEFAULT_THRESHOLD)
     parser.add_argument("--show", type=int, default=2)
@@ -179,7 +183,8 @@ def main() -> int:
     args = parser.parse_args()
 
     env.load()
-    book = json.loads(Path(args.playbook).read_text())
+    source = Path(args.playbook) if args.playbook else playbook.require_fields()
+    book = json.loads(source.read_text())
     conn = db.connect(Path(tempfile.mkdtemp()) / "corpus.db")
     load_corpus(conn, REPO / "review-table-prompts")
     columns = load_columns(conn)

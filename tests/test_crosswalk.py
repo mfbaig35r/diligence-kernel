@@ -124,9 +124,13 @@ def test_field_result_reports_coverage_by_layer():
 
 
 def test_the_extracted_playbook_is_well_formed():
-    payload = json.loads(
-        (cw.Path(__file__).resolve().parents[1] / "playbook" / "corporate-ma-3.4.json").read_text()
-    )
+    """Skipped where the playbook is not checked out: it is a separate private repository."""
+    from diligence_kernel import playbook
+
+    path = playbook.fields_path()
+    if path is None:
+        pytest.skip(f"no playbook checkout; set {playbook.ENV_VAR}")
+    payload = json.loads(path.read_text())
     assert len(payload["prompts"]) == 16
     assert sum(len(p["fields"]) for p in payload["prompts"]) == 92
     assert "model-generated" in payload["provenance"], "the provenance caveat travels with the data"
@@ -135,3 +139,23 @@ def test_the_extracted_playbook_is_well_formed():
         assert p["moves"]
         # The hyphenated line breaks the PDF introduces must have been rejoined.
         assert not any(f.endswith("-") or "- " in f[:40] and "drag- " in f for f in p["fields"])
+
+
+def test_the_kernel_runs_without_a_playbook_checkout(monkeypatch, tmp_path):
+    """The crosswalk is analysis, not runtime: a missing playbook must not raise on import."""
+    from diligence_kernel import playbook
+
+    monkeypatch.setenv(playbook.ENV_VAR, str(tmp_path / "nowhere"))
+    assert playbook.playbook_dir() is None
+    assert playbook.fields_path() is None
+    with pytest.raises(FileNotFoundError) as excinfo:
+        playbook.require_fields()
+    assert playbook.ENV_VAR in str(excinfo.value), "the error says how to point at one"
+
+
+def test_an_explicit_path_wins_over_the_sibling(monkeypatch, tmp_path):
+    from diligence_kernel import playbook
+
+    (tmp_path / playbook.FIELDS_FILE).write_text("{}")
+    monkeypatch.setenv(playbook.ENV_VAR, str(tmp_path))
+    assert playbook.fields_path() == tmp_path / playbook.FIELDS_FILE

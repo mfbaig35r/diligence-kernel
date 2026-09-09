@@ -33,6 +33,8 @@ cp .env.example .env    # then edit
 | `DILIGENCE_KERNEL_OCR` | `auto` | `auto`, `tesseract`, `vision`, `off` |
 | `DILIGENCE_KERNEL_OCR_DPI` | `300` | Render resolution for OCR |
 | `DILIGENCE_KERNEL_PRICE_IN` / `_OUT` | — | Price a model the table does not carry |
+| `DILIGENCE_KERNEL_PLAYBOOK` | sibling `diligence-playbook/` | The firm playbook checkout, for the crosswalk only |
+| `DILIGENCE_KERNEL_EMBED_CACHE` | `~/.diligence-kernel/embeddings.json` | Crosswalk embedding cache |
 
 ## Register with Claude Code
 
@@ -53,6 +55,8 @@ claude mcp add diligence-kernel \
 | `scripts/score_intake.py` | Score a Table 05 run against the fixture ground truth |
 | `scripts/compare_runs.py` | Compare two runs cell by cell, judged against ground truth |
 | `scripts/sync_prompt_graph.py` | Replay the corpus into prompt-graph. `--dry-run` writes nothing |
+| `scripts/extract_playbook.py` | Extract the playbook's prompts and fields from its PDF |
+| `scripts/crosswalk.py` | Crosswalk playbook against corpus. `--calibrate` checks the scorer |
 | `tests/fixtures/build_fixtures.py` | Regenerate the binary fixtures (needs `[fixtures]`) |
 
 ## The smoke test
