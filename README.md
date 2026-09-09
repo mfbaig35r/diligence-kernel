@@ -69,8 +69,9 @@ covered. `table_describe` reports the pairs that must be built together.
 
 ## Real documents
 
-PDF, DOCX, XLSX and HTML extraction is installed by default — a data room is not a folder of
-text files. Three things happen on the way in that matter more than they sound:
+PDF, DOCX, XLSX, CSV and HTML are read by default — a data room is not a folder of text
+files. Anything produced but unreadable (`.xls`, `.msg`, `.pptx`, archives) is **reported**,
+not skipped in silence: an unread file must not look like an absent one. Three things happen on the way in that matter more than they sound:
 
 - **Running headers and footers are stripped.** An extractor emits them in reading order, so
   a clause spanning a page break arrives with `Confidential Page 1 of 3` inside the sentence.
@@ -82,6 +83,28 @@ text files. Three things happen on the way in that matter more than they sound:
   tesseract, so nothing leaves the machine. Set `DILIGENCE_KERNEL_OCR` to `tesseract`
   (default), `vision`, or `off`. Without OCR available, the file still ingests and reports
   itself rather than disappearing.
+
+### Spreadsheets are read as tables, not prose
+
+`00a` classifies cap tables, stock ledgers, employee censuses and loss runs as **Records** —
+they report facts as at a date, and the as-of date is what makes one usable. Flattening a
+sheet into prose loses two things a reader cannot recover:
+
+- **Column headers.** A chunk holding rows 27 to 52 of a census, with the header left behind
+  in an earlier chunk, is a grid of unlabelled numbers — nothing can tell salary from bonus.
+- **Sheet boundaries.** A cap table followed by a census reads as one table that changes
+  shape halfway through.
+
+So a table is chunked by rows, and every chunk restates its sheet name and header:
+
+```
+# Sheet: Employee Census (continued)
+Employee ID  Name         Title        Location        Hire Date   Base Salary  ...
+E1032        Employee 32  Engineer II  Austin, TX      2022-06-15  125200       ...
+```
+
+The repetition is written into the stored text too, the way a printed schedule repeats its
+headings on each page, which keeps every chunk an exact slice and offsets true.
 
 The Verbatim check tolerates what extraction does to text — ligatures, soft hyphens,
 hyphenated line breaks, wrapping, smart quotes, dashes, non-breaking spaces — while still

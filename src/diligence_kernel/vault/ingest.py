@@ -19,18 +19,30 @@ from pathlib import Path
 from ..db import now
 from ..findings import Finding
 from . import ocr as ocr_mod
+from . import tabular
 from .cleaning import strip_running_lines
 
-#: Extensions distillcore can extract without optional extras installed.
-ALWAYS_AVAILABLE = {".txt", ".md", ".csv", ".json"}
-OPTIONAL = {
-    ".pdf": "distillcore[pdf]",
-    ".docx": "distillcore[docx]",
-    ".html": "distillcore[html]",
-    ".htm": "distillcore[html]",
-    ".xlsx": "distillcore[excel]",
+#: Read as prose: extracted, cleaned, chunked by paragraph.
+PROSE_SUFFIXES = frozenset({".txt", ".md", ".pdf", ".docx", ".html", ".htm"})
+#: Read as tables: chunked by rows, header repeated. See `tabular.py`.
+TABULAR_SUFFIXES = tabular.TABULAR_SUFFIXES
+SUPPORTED = PROSE_SUFFIXES | TABULAR_SUFFIXES
+
+#: File types a data room contains that this vault cannot read yet. They are reported
+#: rather than skipped in silence: a produced document nobody can see is exactly what the
+#: coverage register exists to catch, and an unread file must not look like an absent one.
+KNOWN_UNREADABLE: dict[str, str] = {
+    ".xls": "the legacy Excel format; re-save it as .xlsx",
+    ".doc": "the legacy Word format; re-save it as .docx",
+    ".ppt": "PowerPoint is not supported",
+    ".pptx": "PowerPoint is not supported",
+    ".msg": "Outlook mail is not supported; export the message as .pdf or .txt",
+    ".eml": "email is not supported; export the message as .pdf or .txt",
+    ".rtf": "RTF is not supported; re-save it as .docx",
+    ".zip": "archives are not opened; expand it into the data room first",
+    ".7z": "archives are not opened; expand it into the data room first",
+    ".rar": "archives are not opened; expand it into the data room first",
 }
-SUPPORTED = ALWAYS_AVAILABLE | set(OPTIONAL)
 
 
 def sha256_file(path: Path) -> str:
@@ -135,6 +147,17 @@ def ingest_path(
         suffix = path.suffix.lower()
         if suffix not in SUPPORTED:
             counts["unsupported"] += 1
+            if (reason := KNOWN_UNREADABLE.get(suffix)) is not None:
+                findings.append(
+                    Finding(
+                        code="DOCUMENT_FORMAT_UNREADABLE",
+                        subject_type="document",
+                        subject_id=None,
+                        subject_name=path.name,
+                        observation=f"The file was produced but cannot be read: {reason}.",
+                        evidence={"path": str(path), "suffix": suffix},
+                    )
+                )
             continue
 
         digest = sha256_file(path)
@@ -152,8 +175,13 @@ def ingest_path(
         if existing:
             conn.execute("DELETE FROM document WHERE id = ?", (existing["id"],))
 
+        is_tabular = suffix in TABULAR_SUFFIXES
         try:
-            result = dc_extract(path)
+            if is_tabular:
+                sheets = tabular.read_sheets(path)
+                result = None
+            else:
+                result = dc_extract(path)
         except Exception as exc:
             counts["failed"] += 1
             conn.execute(
@@ -162,7 +190,6 @@ def ingest_path(
                    VALUES (?,?,?,?,'failed',?,?)""",
                 (str(path), path.name, digest, path.stat().st_size, str(exc)[:500], now()),
             )
-            hint = OPTIONAL.get(suffix)
             findings.append(
                 Finding(
                     code="EXTRACT_FAILED",
@@ -170,9 +197,39 @@ def ingest_path(
                     subject_id=None,
                     subject_name=path.name,
                     observation=f"The file could not be extracted: {exc}",
-                    evidence={"path": str(path)} | ({"install": hint} if hint else {}),
+                    evidence={"path": str(path), "suffix": suffix},
                 )
             )
+            continue
+
+        # A spreadsheet is chunked by rows with its header repeated, not by paragraph.
+        # `tabular.render` builds the stored text and the chunks together, so each chunk is
+        # an exact slice and offsets need no searching.
+        if is_tabular:
+            full_text, prechunked = tabular.render(sheets)
+            page_count = len(sheets)
+            doc_id = _insert_document(
+                conn, path, digest, page_count, full_text, "extracted", None, None
+            )
+            counts["ingested"] += 1
+            # Report what the workbook holds before deciding whether it holds anything, so
+            # an empty sheet is named rather than lost behind a single DOCUMENT_EMPTY.
+            findings.extend(_sheet_findings(doc_id, path, sheets))
+            if not full_text.strip():
+                findings.append(
+                    Finding(
+                        code="DOCUMENT_EMPTY",
+                        subject_type="document",
+                        subject_id=doc_id,
+                        subject_name=path.name,
+                        observation="The workbook holds no rows and no table can see it.",
+                        evidence={"path": str(path)},
+                    )
+                )
+                continue
+            spans = tabular.spans_for(full_text, prechunked)
+            _insert_chunks(conn, doc_id, prechunked, spans, [], embedder, findings, path)
+            counts["chunks"] += len(prechunked)
             continue
 
         # Remove running headers and footers before anything reads the text. They land
@@ -228,25 +285,16 @@ def ingest_path(
         cleaned = strip_running_lines(page_texts)
         full_text = cleaned.full_text if cleaned.pages else (result.full_text or "")
         counts["header_lines_removed"] += cleaned.lines_removed
-        cur = conn.execute(
-            """INSERT INTO document
-               (source_path, filename, sha256, bytes, page_count, full_text,
-                extract_status, text_source, ocr_engine, ocr_confidence, ingested_at)
-               VALUES (?,?,?,?,?,?, 'extracted', ?,?,?,?)""",
-            (
-                str(path),
-                path.name,
-                digest,
-                path.stat().st_size,
-                result.page_count,
-                full_text,
-                text_source,
-                engine_name,
-                confidence,
-                now(),
-            ),
+        doc_id = _insert_document(
+            conn,
+            path,
+            digest,
+            result.page_count,
+            full_text,
+            text_source,
+            engine_name,
+            confidence,
         )
-        doc_id = int(cur.lastrowid)
         counts["ingested"] += 1
 
         if text_source == "ocr":
@@ -303,44 +351,137 @@ def ingest_path(
         )
         spans = locate_chunks(full_text, pieces)
         bounds = page_boundaries_from_text(cleaned.pages)
-        vectors: list[list[float]] = []
-        if embedder is not None and pieces:
-            try:
-                vectors = embedder(pieces)
-            except Exception as exc:
-                findings.append(
-                    Finding(
-                        code="EMBEDDING_FAILED",
-                        subject_type="document",
-                        subject_id=doc_id,
-                        subject_name=path.name,
-                        observation=f"Chunks were stored without embeddings: {exc}",
-                        evidence={"path": str(path)},
-                    )
-                )
-
-        for i, (piece, (start, end)) in enumerate(zip(pieces, spans, strict=False)):
-            p_start, p_end = pages_for_span(bounds, start, end)
-            vec = vectors[i] if i < len(vectors) else None
-            conn.execute(
-                """INSERT INTO chunk
-                   (document_id, chunk_index, text, char_start, char_end, page_start, page_end,
-                    token_estimate, embedding, embedding_dim)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                (
-                    doc_id,
-                    i,
-                    piece,
-                    start,
-                    end,
-                    p_start,
-                    p_end,
-                    max(1, len(piece) // 4),
-                    pack_embedding(vec) if vec else None,
-                    len(vec) if vec else None,
-                ),
-            )
+        _insert_chunks(conn, doc_id, pieces, spans, bounds, embedder, findings, path)
         counts["chunks"] += len(pieces)
 
     conn.commit()
     return counts, findings
+
+
+def _insert_document(
+    conn: sqlite3.Connection,
+    path: Path,
+    digest: str,
+    page_count: int | None,
+    full_text: str,
+    text_source: str,
+    engine_name: str | None,
+    confidence: float | None,
+) -> int:
+    cur = conn.execute(
+        """INSERT INTO document
+           (source_path, filename, sha256, bytes, page_count, full_text,
+            extract_status, text_source, ocr_engine, ocr_confidence, ingested_at)
+           VALUES (?,?,?,?,?,?, 'extracted', ?,?,?,?)""",
+        (
+            str(path),
+            path.name,
+            digest,
+            path.stat().st_size,
+            page_count,
+            full_text,
+            text_source,
+            engine_name,
+            confidence,
+            now(),
+        ),
+    )
+    return int(cur.lastrowid)
+
+
+def _insert_chunks(
+    conn: sqlite3.Connection,
+    doc_id: int,
+    pieces: list[str],
+    spans: list[tuple[int, int]],
+    bounds: list[tuple[int, int, int]],
+    embedder: Callable[[list[str]], list[list[float]]] | None,
+    findings: list[Finding],
+    path: Path,
+) -> None:
+    vectors: list[list[float]] = []
+    if embedder is not None and pieces:
+        try:
+            vectors = embedder(pieces)
+        except Exception as exc:
+            findings.append(
+                Finding(
+                    code="EMBEDDING_FAILED",
+                    subject_type="document",
+                    subject_id=doc_id,
+                    subject_name=path.name,
+                    observation=f"Chunks were stored without embeddings: {exc}",
+                    evidence={"path": str(path)},
+                )
+            )
+    for i, (piece, (start, end)) in enumerate(zip(pieces, spans, strict=False)):
+        p_start, p_end = pages_for_span(bounds, start, end) if bounds else (None, None)
+        vec = vectors[i] if i < len(vectors) else None
+        conn.execute(
+            """INSERT INTO chunk
+               (document_id, chunk_index, text, char_start, char_end, page_start, page_end,
+                token_estimate, embedding, embedding_dim)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (
+                doc_id,
+                i,
+                piece,
+                start,
+                end,
+                p_start,
+                p_end,
+                max(1, len(piece) // 4),
+                pack_embedding(vec) if vec else None,
+                len(vec) if vec else None,
+            ),
+        )
+
+
+def _sheet_findings(doc_id: int, path: Path, sheets: list[tabular.Sheet]) -> list[Finding]:
+    """Report what a workbook holds, and any sheet whose header could not be found.
+
+    A sheet with no header is a grid of unlabelled columns. It is still stored, because a
+    produced document must not disappear, but nothing downstream can name its fields.
+    """
+    out = [
+        Finding(
+            code="WORKBOOK_READ",
+            subject_type="document",
+            subject_id=doc_id,
+            subject_name=path.name,
+            observation=(
+                f"{len(sheets)} sheets were read as tables: "
+                + "; ".join(f"{s.name} ({s.row_count} rows)" for s in sheets)
+                + "."
+            ),
+            evidence={"sheets": [{"name": s.name, "rows": s.row_count} for s in sheets]},
+        )
+    ]
+    empty = [s.name for s in sheets if not s.rows and not s.header]
+    if empty:
+        out.append(
+            Finding(
+                code="SHEET_EMPTY",
+                subject_type="document",
+                subject_id=doc_id,
+                subject_name=path.name,
+                observation=f"{', '.join(empty)} holds no rows.",
+                evidence={"sheets": empty},
+            )
+        )
+    headerless = [s.name for s in sheets if not s.header and s.rows]
+    if headerless:
+        out.append(
+            Finding(
+                code="SHEET_WITHOUT_HEADER",
+                subject_type="document",
+                subject_id=doc_id,
+                subject_name=path.name,
+                observation=(
+                    f"No header row could be identified in {', '.join(headerless)}; its columns "
+                    "are unlabelled and cannot be relied on."
+                ),
+                evidence={"sheets": headerless},
+            )
+        )
+    return out

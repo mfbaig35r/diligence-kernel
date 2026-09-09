@@ -79,8 +79,11 @@ def test_ingest_extracts_and_chunks(loaded, dataroom):
     assert counts["ingested"] == len(DOCUMENTS)
     assert counts["failed"] == 0
     assert counts["chunks"] > 0
-    # With OCR off, the scan reports both that it could not be read and why.
-    assert [f.code for f in findings] == ["OCR_UNAVAILABLE", "DOCUMENT_EMPTY"]
+    # With OCR off, the scan reports both that it could not be read and why. The
+    # spreadsheets report what they hold.
+    codes = [f.code for f in findings]
+    assert "OCR_UNAVAILABLE" in codes and "DOCUMENT_EMPTY" in codes
+    assert codes.count("WORKBOOK_READ") == 2, "the workbook and the CSV schedule"
 
     # Re-ingesting an unchanged data room is a no-op.
     again, _ = ingest_path(loaded, dataroom)

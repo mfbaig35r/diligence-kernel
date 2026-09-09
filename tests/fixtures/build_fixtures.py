@@ -314,10 +314,124 @@ def build_amendment(path: Path) -> None:
     d.save(str(path))
 
 
+#: Rows of the cap table fixture, so a test can assert what came back.
+CAP_TABLE_ROWS = [
+    ("Morgan Feld", "Common Units", "Class A", 4500000, "2019-03-01", 0.0001, "45.0%"),
+    ("Priya Raman", "Common Units", "Class A", 2500000, "2019-03-01", 0.0001, "25.0%"),
+    ("Cedar Ventures LP", "Preferred Units", "Series A", 2000000, "2021-06-15", 1.25, "20.0%"),
+    ("Option Pool (unallocated)", "Options", "Class A", 800000, "2021-06-15", None, "8.0%"),
+    ("J. Okafor", "Options", "Class A", 120000, "2022-01-10", 0.85, "1.2%"),
+]
+CENSUS_ROWS = 40
+CAP_TABLE_AS_OF = "2026-06-30"
+
+
+def build_workbook(path: Path) -> None:
+    """A cap table and an employee census in one workbook.
+
+    00a calls these Records: they report facts as at a date, and the as-of date is what makes
+    one usable. Two sheets in one file is the ordinary case, and the reason sheet boundaries
+    have to survive ingestion.
+    """
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Cap Table"
+    ws.append(["Acme Manufacturing LLC — Capitalization Table"])
+    ws.append(["As of", CAP_TABLE_AS_OF])
+    ws.append([])
+    ws.append(
+        ["Holder", "Security", "Class", "Units", "Issue Date", "Price per Unit", "Fully Diluted %"]
+    )
+    for row in CAP_TABLE_ROWS:
+        ws.append(list(row))
+
+    census = wb.create_sheet("Employee Census")
+    census.append(
+        [
+            "Employee ID",
+            "Name",
+            "Title",
+            "Location",
+            "Hire Date",
+            "Base Salary",
+            "Bonus Target %",
+            "Visa Status",
+        ]
+    )
+    for i in range(1, CENSUS_ROWS + 1):
+        census.append(
+            [
+                f"E{1000 + i}",
+                f"Employee {i}",
+                "Engineer II" if i % 3 else "Manager",
+                "Wilmington, DE" if i % 2 else "Austin, TX",
+                f"20{18 + i % 7}-0{1 + i % 9}-15",
+                82000 + i * 1350,
+                10 if i % 3 else 20,
+                "H-1B" if i % 11 == 0 else "US Citizen",
+            ]
+        )
+    wb.save(str(path))
+
+
+def build_lien_schedule(path: Path) -> None:
+    """A CSV schedule, the other shape a data room delivers a register in."""
+    import csv as csv_mod
+
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv_mod.writer(handle)
+        writer.writerow(
+            [
+                "Filing Number",
+                "Debtor",
+                "Secured Party",
+                "Filed Date",
+                "Jurisdiction",
+                "Collateral Description",
+                "Status",
+            ]
+        )
+        writer.writerows(
+            [
+                [
+                    "2019-3348217",
+                    "Acme Manufacturing LLC",
+                    "Cedar Bank, N.A.",
+                    "2019-04-02",
+                    "Delaware SOS",
+                    "All assets",
+                    "Active",
+                ],
+                [
+                    "2021-6612904",
+                    "Acme Manufacturing LLC",
+                    "Halstead Equipment Finance LLC",
+                    "2021-08-19",
+                    "Delaware SOS",
+                    "Specific equipment",
+                    "Active",
+                ],
+                [
+                    "2016-1120388",
+                    "Acme Manufacturing LLC",
+                    "Northwind Capital Partners",
+                    "2016-11-30",
+                    "Delaware SOS",
+                    "All assets",
+                    "Lapsed",
+                ],
+            ]
+        )
+
+
 if __name__ == "__main__":
     OUT.mkdir(parents=True, exist_ok=True)
     build_lease(OUT / "cedar-point-lease.pdf")
     build_amendment(OUT / "cedar-point-lease-amendment-1.docx")
     build_scan(OUT / "cedar-point-exhibit-a-scan.pdf")
+    build_workbook(OUT / "cap-table-and-census.xlsx")
+    build_lien_schedule(OUT / "ucc-lien-schedule.csv")
     for p in sorted(OUT.iterdir()):
         print(f"  {p.name:44s} {p.stat().st_size:>8,d} bytes")

@@ -19,6 +19,8 @@ DOCUMENTS = (
     "cedar-point-lease.pdf",
     "cedar-point-lease-amendment-1.docx",
     "cedar-point-exhibit-a-scan.pdf",
+    "cap-table-and-census.xlsx",
+    "ucc-lien-schedule.csv",
 )
 #: The one with no text layer. It ingests, but no cell can be filled from it.
 UNREADABLE = "cedar-point-exhibit-a-scan.pdf"

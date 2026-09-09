@@ -102,6 +102,30 @@ in the vault. When that text is itself a transcription, a match compares one rea
 another — it still catches paraphrase, but it cannot show the words are the document's. A
 check that silently proves less than it appears to is how a control becomes theatre.
 
+## 3d. A spreadsheet is chunked by rows, with its header repeated
+
+`00a` calls cap tables, stock ledgers, censuses and loss runs **Records**, so they are input
+documents rather than only the place arithmetic happens. Chunking one by paragraph produced
+this, observed on a 40-row census fixture:
+
+```
+E1027   Employee 27   Manager   Wilmington, DE   2024-01-15   118450   20   US Citizen
+```
+
+The header was two chunks back. Nothing in that passage says `118450` is base salary and
+`20` is a bonus percentage, and a model asked to read it will guess — silently, on a record
+that feeds the transaction payments schedule.
+
+Tables are therefore chunked by rows with the sheet name and header restated in every chunk,
+including continuations. The repetition is written into the stored text as well, so a chunk
+stays an exact slice of the document and offsets need no searching. Sheet boundaries are
+explicit for the same reason: two tables in one workbook are two tables.
+
+Files the vault cannot read (`.xls`, `.msg`, `.pptx`, archives) raise
+`DOCUMENT_FORMAT_UNREADABLE` rather than being skipped. A produced document nobody can see is
+exactly what the coverage register exists to catch, and an unread file must not resemble an
+absent one.
+
 ## 4. The standards are enforced, not requested
 
 A prompt instruction is a request. `engine/validate.py` turns `00a` into checks that run
@@ -150,6 +174,9 @@ where their answers live, and a run never overwrites a verified, corrected, or l
   confidence because it is rendered text, lightly greyed. Real recorded documents are skewed,
   stamped, annotated and photocopied; expect materially lower confidence and check what
   `OCR_LOW_CONFIDENCE` actually catches before trusting the threshold.
+- **Legacy and mail formats are unread.** `.xls`, `.doc`, `.rtf`, `.msg`, `.eml`, `.pptx`
+  and archives are reported, not parsed. Email in particular is common in a data room and
+  carries the correspondence that Tables 17, 23 and 25 are built around.
 - **The vision OCR path is unexercised.** It is written against the Responses API image
   input but has never run, for the same reason the rest of the live path has not.
 - **Table 05's document-type vocabulary is ~180 values.** `00a` section 8 flags this as
