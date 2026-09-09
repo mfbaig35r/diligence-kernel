@@ -9,7 +9,7 @@ from diligence_kernel.engine.runner import RunScope, create_run, execute_run
 from diligence_kernel.vault.ingest import ingest_path
 from diligence_kernel.vault.units import assemble_units
 
-from .conftest import DOCUMENTS
+from .conftest import DOCUMENTS, INGESTED
 from .stub import StubFiller
 
 # What Table 05 would have produced for the fixture data room. Classification is stubbed
@@ -76,7 +76,7 @@ def _classify(conn):
 
 def test_ingest_extracts_and_chunks(loaded, dataroom):
     counts, findings = ingest_path(loaded, dataroom)
-    assert counts["ingested"] == len(DOCUMENTS)
+    assert counts["ingested"] == INGESTED
     assert counts["failed"] == 0
     assert counts["chunks"] > 0
     # With OCR off, the scan reports both that it could not be read and why. The
@@ -85,9 +85,12 @@ def test_ingest_extracts_and_chunks(loaded, dataroom):
     assert "OCR_UNAVAILABLE" in codes and "DOCUMENT_EMPTY" in codes
     assert codes.count("WORKBOOK_READ") == 2, "the workbook and the CSV schedule"
 
-    # Re-ingesting an unchanged data room is a no-op.
+    # Re-ingesting an unchanged data room is a no-op. The attachment is not revisited:
+    # its carrier is unchanged, so it is never re-extracted, and it stays in the vault.
     again, _ = ingest_path(loaded, dataroom)
-    assert again["ingested"] == 0 and again["unchanged"] == len(DOCUMENTS)
+    assert again["ingested"] == 0
+    assert again["unchanged"] == len(DOCUMENTS)
+    assert loaded.execute("SELECT COUNT(*) AS n FROM document").fetchone()["n"] == INGESTED
 
 
 def test_chunk_offsets_point_at_real_text(loaded, dataroom):

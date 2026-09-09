@@ -276,6 +276,19 @@ ALTER TABLE document ADD COLUMN ocr_confidence REAL;
 CREATE INDEX idx_document_text_source ON document(text_source);
 """,
     ),
+    (
+        3,
+        """
+-- An attachment is a document in its own right, carried by another. 00a treats an email
+-- with attachments as one document, but in a data room the attachment is usually the
+-- agreement, so it is classified and routed on its own merits and linked back to its carrier.
+ALTER TABLE document ADD COLUMN parent_document_id INTEGER REFERENCES document(id);
+-- Privilege markings found in the text. 00a: report the marking and stop. A privileged
+-- document reaching the wrong reviewer is a handling problem, which is what this catches.
+ALTER TABLE document ADD COLUMN privilege_markings TEXT;
+CREATE INDEX idx_document_parent ON document(parent_document_id);
+""",
+    ),
 ]
 
 

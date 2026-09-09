@@ -11,6 +11,7 @@ Ingestion is idempotent by content hash: re-ingesting an unchanged file is a no-
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 import struct
 from collections.abc import Callable, Iterable, Sequence
@@ -18,15 +19,21 @@ from pathlib import Path
 
 from ..db import now
 from ..findings import Finding
+from . import mail, tabular
 from . import ocr as ocr_mod
-from . import tabular
 from .cleaning import strip_running_lines
 
 #: Read as prose: extracted, cleaned, chunked by paragraph.
 PROSE_SUFFIXES = frozenset({".txt", ".md", ".pdf", ".docx", ".html", ".htm"})
 #: Read as tables: chunked by rows, header repeated. See `tabular.py`.
 TABULAR_SUFFIXES = tabular.TABULAR_SUFFIXES
-SUPPORTED = PROSE_SUFFIXES | TABULAR_SUFFIXES
+#: Read as correspondence: headers normalized, quoted chain separated. See `mail.py`.
+MAIL_SUFFIXES = mail.MAIL_SUFFIXES
+SUPPORTED = PROSE_SUFFIXES | TABULAR_SUFFIXES | MAIL_SUFFIXES
+
+#: Attachments are written here, beside the database, and ingested as documents in their
+#: own right. They are client material, like the database itself.
+ATTACHMENTS_DIRNAME = "attachments"
 
 #: File types a data room contains that this vault cannot read yet. They are reported
 #: rather than skipped in silence: a produced document nobody can see is exactly what the
@@ -36,8 +43,6 @@ KNOWN_UNREADABLE: dict[str, str] = {
     ".doc": "the legacy Word format; re-save it as .docx",
     ".ppt": "PowerPoint is not supported",
     ".pptx": "PowerPoint is not supported",
-    ".msg": "Outlook mail is not supported; export the message as .pdf or .txt",
-    ".eml": "email is not supported; export the message as .pdf or .txt",
     ".rtf": "RTF is not supported; re-save it as .docx",
     ".zip": "archives are not opened; expand it into the data room first",
     ".7z": "archives are not opened; expand it into the data room first",
@@ -139,8 +144,13 @@ def ingest_path(
         "chunks": 0,
         "header_lines_removed": 0,
         "ocred": 0,
+        "quoted_chains": 0,
+        "attachments": 0,
     }
     findings: list[Finding] = []
+    # (path, carrier document id, carrier filename) — ingested after the main walk, so an
+    # attachment goes through the same extraction, OCR and chunking as anything else.
+    pending_attachments: list[tuple[Path, int, str]] = []
 
     paths = sorted(p for p in (root.rglob("*") if recursive else root.glob("*")) if p.is_file())
     for path in paths:
@@ -176,9 +186,13 @@ def ingest_path(
             conn.execute("DELETE FROM document WHERE id = ?", (existing["id"],))
 
         is_tabular = suffix in TABULAR_SUFFIXES
+        is_mail = suffix in MAIL_SUFFIXES
         try:
             if is_tabular:
                 sheets = tabular.read_sheets(path)
+                result = None
+            elif is_mail:
+                message = mail.read_message(path)
                 result = None
             else:
                 result = dc_extract(path)
@@ -200,6 +214,43 @@ def ingest_path(
                     evidence={"path": str(path), "suffix": suffix},
                 )
             )
+            continue
+
+        if is_mail:
+            full_text = message.render()
+            doc_id = _insert_document(conn, path, digest, 1, full_text, "extracted", None, None)
+            counts["ingested"] += 1
+            _record_privilege(conn, doc_id, path, full_text, findings)
+            if message.quoted:
+                counts["quoted_chains"] += 1
+            for attachment in message.documents:
+                written = _write_attachment(conn, digest, attachment)
+                if written is not None:
+                    pending_attachments.append((written, doc_id, path.name))
+            if message.attachments and not message.documents:
+                findings.append(
+                    Finding(
+                        code="ATTACHMENTS_NOT_DOCUMENTS",
+                        subject_type="document",
+                        subject_id=doc_id,
+                        subject_name=path.name,
+                        observation=(
+                            f"{len(message.attachments)} attachments were signatures, images "
+                            "or calendar items rather than documents, and were not ingested."
+                        ),
+                        evidence={"names": [a.filename for a in message.attachments]},
+                    )
+                )
+            pieces = dc_chunk(
+                full_text,
+                strategy="paragraph",
+                target_tokens=target_tokens,
+                max_tokens=max_tokens,
+                overlap_tokens=overlap_tokens,
+            )
+            spans = locate_chunks(full_text, pieces)
+            _insert_chunks(conn, doc_id, pieces, spans, [], embedder, findings, path)
+            counts["chunks"] += len(pieces)
             continue
 
         # A spreadsheet is chunked by rows with its header repeated, not by paragraph.
@@ -329,6 +380,8 @@ def ingest_path(
                     )
                 )
 
+        _record_privilege(conn, doc_id, path, full_text, findings)
+
         if not full_text.strip():
             findings.append(
                 Finding(
@@ -354,6 +407,49 @@ def ingest_path(
         _insert_chunks(conn, doc_id, pieces, spans, bounds, embedder, findings, path)
         counts["chunks"] += len(pieces)
 
+    conn.commit()
+
+    # Attachments last: each goes through the same path as any other file, then is linked
+    # back to the message that carried it. Recursing here rather than inline keeps a message
+    # with a nested attachment from re-entering the walk.
+    for attachment_path, carrier_id, carrier_name in pending_attachments:
+        sub_counts, sub_findings = ingest_path(
+            conn,
+            attachment_path.parent,
+            recursive=False,
+            embedder=embedder,
+            target_tokens=target_tokens,
+            max_tokens=max_tokens,
+            overlap_tokens=overlap_tokens,
+            force=force,
+            ocr=ocr,
+        )
+        for key in ("ingested", "chunks", "failed", "ocred", "header_lines_removed"):
+            counts[key] += sub_counts.get(key, 0)
+        findings.extend(sub_findings)
+        row = conn.execute(
+            "SELECT id FROM document WHERE source_path = ?", (str(attachment_path),)
+        ).fetchone()
+        if row is None:
+            continue
+        conn.execute(
+            "UPDATE document SET parent_document_id = ? WHERE id = ?",
+            (carrier_id, int(row["id"])),
+        )
+        counts["attachments"] += 1
+        findings.append(
+            Finding(
+                code="ATTACHMENT_INGESTED",
+                subject_type="document",
+                subject_id=int(row["id"]),
+                subject_name=attachment_path.name,
+                observation=(
+                    f"Extracted from {carrier_name} and ingested as a document in its own "
+                    "right, so it is classified and routed on its own merits."
+                ),
+                evidence={"carrier": carrier_name, "path": str(attachment_path)},
+            )
+        )
     conn.commit()
     return counts, findings
 
@@ -485,3 +581,65 @@ def _sheet_findings(doc_id: int, path: Path, sheets: list[tabular.Sheet]) -> lis
             )
         )
     return out
+
+
+def _attachments_dir(conn: sqlite3.Connection) -> Path:
+    """Where extracted attachments live: beside the matter database.
+
+    Not inside the data room, which may be read-only and which the next ingest would then
+    walk twice. They are client material, so they belong with the database, under the same
+    handling as the rest of the matter file.
+    """
+    for _, name, file in conn.execute("PRAGMA database_list"):
+        if name == "main" and file:
+            return Path(file).parent / ATTACHMENTS_DIRNAME
+    return Path.cwd() / ATTACHMENTS_DIRNAME
+
+
+def _write_attachment(
+    conn: sqlite3.Connection, carrier_digest: str, attachment: mail.Attachment
+) -> Path | None:
+    """Write an attachment to disk so it can be ingested like any other file."""
+    suffix = Path(attachment.filename).suffix.lower()
+    if suffix not in SUPPORTED:
+        return None
+    folder = _attachments_dir(conn) / carrier_digest[:16]
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / Path(attachment.filename).name
+    target.write_bytes(attachment.content)
+    return target
+
+
+def _record_privilege(
+    conn: sqlite3.Connection,
+    doc_id: int,
+    path: Path,
+    text: str,
+    findings: list[Finding],
+) -> None:
+    """Record any privilege marking found in a document's text.
+
+    00a is explicit: report the marking and stop, never assess whether privilege applies.
+    "A privileged document reaching the wrong reviewer is a handling problem," which is why
+    this is surfaced at ingestion rather than left for a column to notice.
+    """
+    markings = mail.privilege_markings_in(text or "")
+    if not markings:
+        return
+    conn.execute(
+        "UPDATE document SET privilege_markings = ? WHERE id = ?",
+        (json.dumps(markings), doc_id),
+    )
+    findings.append(
+        Finding(
+            code="PRIVILEGE_MARKING",
+            subject_type="document",
+            subject_id=doc_id,
+            subject_name=path.name,
+            observation=(
+                f"The document is marked {', '.join(repr(m) for m in markings)}. The marking "
+                "is reported, not assessed; confirm who may see it before it is circulated."
+            ),
+            evidence={"markings": markings, "path": str(path)},
+        )
+    )

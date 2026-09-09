@@ -11,6 +11,7 @@ reported, never quietly dropped.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import sqlite3
 from dataclasses import dataclass
@@ -113,7 +114,7 @@ def documents_in_scope(conn: sqlite3.Connection, table_number: str) -> list[sqli
         # 00a: intake "runs over everything". Its scope cannot depend on the classification
         # it is the thing that produces.
         return conn.execute(
-            """SELECT d.id, d.filename, d.sha256, NULL AS workstream,
+            """SELECT d.id, d.filename, d.sha256, d.source_path, NULL AS workstream,
                       NULL AS secondary_workstream, NULL AS document_type, NULL AS subject_entity,
                       NULL AS counterparty, NULL AS document_date, NULL AS amends_or_issued_under,
                       NULL AS routing_disposition, NULL AS document_role
@@ -121,7 +122,7 @@ def documents_in_scope(conn: sqlite3.Connection, table_number: str) -> list[sqli
         ).fetchall()
 
     rows = conn.execute(
-        """SELECT d.id, d.filename, d.sha256, c.workstream, c.secondary_workstream, c.document_type,
+        """SELECT d.id, d.filename, d.sha256, d.source_path, c.workstream, c.secondary_workstream, c.document_type,
                   c.subject_entity, c.counterparty, c.document_date, c.amends_or_issued_under,
                   c.routing_disposition, c.document_role
            FROM document d
@@ -170,7 +171,11 @@ def propose_units(
     grouped: dict[str, ProposedUnit] = {}
     if not table["grouping_enabled"]:
         for row in rows:
-            key = f"file:{row['sha256'][:16]}"
+            # Keyed on where the file was produced, not on its content. The same agreement
+            # produced twice — once in a folder, once attached to an email — is two produced
+            # files and two rows; Table 05 carries a Duplicate Indicators column to say so.
+            # Keying on content would silently drop one of them.
+            key = "file:" + hashlib.sha256(row["source_path"].encode()).hexdigest()[:16]
             grouped[key] = ProposedUnit(
                 unit_key=key,
                 label=row["filename"],

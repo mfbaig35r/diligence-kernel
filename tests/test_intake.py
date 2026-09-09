@@ -7,7 +7,7 @@ from diligence_kernel.engine import runner
 from diligence_kernel.vault.ingest import ingest_path
 from diligence_kernel.vault.units import assemble_units, documents_in_scope
 
-from .conftest import DOCUMENTS, READABLE
+from .conftest import INGESTED, READABLE_COUNT
 from .stub import StubFiller
 
 # What Table 05 would return for the fixture data room, keyed by column name. The stub
@@ -29,10 +29,10 @@ INTAKE_SCRIPT = {
 def test_intake_runs_over_every_file_before_any_classification_exists(loaded, dataroom):
     ingest_path(loaded, dataroom)
     scope = documents_in_scope(loaded, "05")
-    assert len(scope) == len(DOCUMENTS), "intake sees every extracted file, classified or not"
+    assert len(scope) == INGESTED, "intake sees every extracted file, classified or not"
 
     counts, findings = assemble_units(loaded, "05")
-    assert counts["created"] == len(DOCUMENTS), "intake is per file, one row each"
+    assert counts["created"] == INGESTED, "intake is per file, one row each"
     assert findings == []
 
 
@@ -51,20 +51,20 @@ def test_running_intake_populates_the_classification_routing_table(loaded, datar
         )
         out = server.run_table("05")
         assert out["status"] == "complete"
-        assert out["cells_total"] == len(DOCUMENTS) * 20
+        assert out["cells_total"] == INGESTED * 20
         # The scan has no text, so its cells are skipped rather than guessed at.
-        assert out["cells_done"] == len(READABLE) * 20
-        assert out["classified"] == len(READABLE)
+        assert out["cells_done"] == READABLE_COUNT * 20
+        assert out["classified"] == READABLE_COUNT
         assert any(f["code"] == "UNIT_HAS_NO_TEXT" for f in out["findings"])
 
         rows = loaded.execute(
             "SELECT workstream, document_type, routing_disposition FROM classification"
         ).fetchall()
-        assert len(rows) == len(READABLE)
+        assert len(rows) == READABLE_COUNT
         assert {r["workstream"] for r in rows} == {"Contracts"}
 
         # Routing now works: the contracts tables can see the files.
-        assert len(documents_in_scope(loaded, "01")) == len(READABLE)
+        assert len(documents_in_scope(loaded, "01")) == READABLE_COUNT
         assert len(documents_in_scope(loaded, "24")) == 0, "tax sees nothing"
     finally:
         server.set_conn(None)

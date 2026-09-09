@@ -426,6 +426,60 @@ def build_lien_schedule(path: Path) -> None:
         )
 
 
+#: The new text of the reply, as distinct from the history it quotes.
+EMAIL_NEW_TEXT = (
+    "Counsel,\n\n"
+    "Attached is the executed First Amendment to the Cedar Point lease, together with the\n"
+    "landlord's consent letter. The landlord has confirmed it will not require a further\n"
+    "consent for the contemplated reorganization, subject to the notice provision in\n"
+    "Section 5.\n\n"
+    "Please confirm whether you consider the notice requirement satisfied by the letter of\n"
+    "12 February.\n\n"
+    "Morgan"
+)
+
+EMAIL_QUOTED_TEXT = (
+    "-----Original Message-----\n"
+    "From: Priya Raman <p.raman@halsteadproperty.example>\n"
+    "Sent: 12 February 2026 09:14\n"
+    "To: Morgan Feld <m.feld@acmemfg.example>\n"
+    "Subject: Cedar Point - consent\n\n"
+    "Morgan,\n\n"
+    "We are content to proceed on the basis discussed. Landlord will not withhold consent.\n\n"
+    "Priya"
+)
+
+EMAIL_SUBJECT = "PRIVILEGED AND CONFIDENTIAL - Cedar Point lease consent"
+
+
+def build_email(path: Path, attachment: Path) -> None:
+    """A reply carrying a quoted chain, a privilege marking, and the real document attached.
+
+    All three are the things a generic text extractor loses: the header block Table 05 routes
+    on, the boundary between new text and repeated history, and the agreement itself.
+    """
+    from email.message import EmailMessage
+
+    msg = EmailMessage()
+    msg["From"] = "Morgan Feld <m.feld@acmemfg.example>"
+    msg["To"] = "Jordan Alvarez <j.alvarez@counsel.example>"
+    msg["Cc"] = "Priya Raman <p.raman@halsteadproperty.example>"
+    msg["Date"] = "Thu, 19 Feb 2026 16:42:11 +0000"
+    msg["Subject"] = EMAIL_SUBJECT
+    msg.set_content(EMAIL_NEW_TEXT + "\n\n" + EMAIL_QUOTED_TEXT)
+    msg.add_attachment(
+        attachment.read_bytes(),
+        maintype="application",
+        subtype="vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename=attachment.name,
+    )
+    # A signature image, which is mail furniture rather than a produced document.
+    msg.add_attachment(
+        b"\x89PNG\r\n\x1a\n" + b"0" * 200, maintype="image", subtype="png", filename="image001.png"
+    )
+    path.write_bytes(msg.as_bytes())
+
+
 if __name__ == "__main__":
     OUT.mkdir(parents=True, exist_ok=True)
     build_lease(OUT / "cedar-point-lease.pdf")
@@ -433,5 +487,6 @@ if __name__ == "__main__":
     build_scan(OUT / "cedar-point-exhibit-a-scan.pdf")
     build_workbook(OUT / "cap-table-and-census.xlsx")
     build_lien_schedule(OUT / "ucc-lien-schedule.csv")
+    build_email(OUT / "cedar-point-consent-thread.eml", OUT / "cedar-point-lease-amendment-1.docx")
     for p in sorted(OUT.iterdir()):
         print(f"  {p.name:44s} {p.stat().st_size:>8,d} bytes")

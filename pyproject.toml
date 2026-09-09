@@ -16,6 +16,7 @@ dependencies = [
     "distillcore[docx,excel,html,pdf]>=0.8.1",
     "openai>=1.60.0",
     "tiktoken>=0.7.0",
+    "extract-msg>=0.48",
 ]
 
 [project.optional-dependencies]

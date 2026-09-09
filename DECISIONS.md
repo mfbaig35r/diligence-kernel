@@ -126,6 +126,33 @@ Files the vault cannot read (`.xls`, `.msg`, `.pptx`, archives) raise
 exactly what the coverage register exists to catch, and an unread file must not resemble an
 absent one.
 
+## 3e. One email is one document; its attachments are documents too
+
+Table 17's review unit is "one regulatory matter — the initiating communication, the
+target's response, any follow-up correspondence… ". That is many documents in one unit,
+which the existing grouping already does. So a message is a document, not a unit.
+
+Three things a generic text extractor loses, each restored:
+
+- **Headers**, normalized into the text, because Table 05 routes on the counterparty, the
+  date and the subject.
+- **The quoted chain**, separated and labelled rather than deleted. Deleting it loses
+  evidence; leaving it inline duplicates every earlier message into every later file, which
+  distorts retrieval and defeats "the most recently dated document that addresses it".
+- **Attachments**, extracted and ingested as documents in their own right and linked to
+  their carrier. In a data room the attachment is usually the agreement, and it should be
+  classified and routed on its own merits rather than buried in an email's text.
+
+**Privilege markings are surfaced at ingestion.** `00a` says to report the marking and stop,
+never to assess privilege, because "a privileged document reaching the wrong reviewer is a
+handling problem". A column that notices it after a run is too late to prevent that, so
+detection runs over every document as it enters the vault.
+
+**A consequence worth stating.** Per-file review units are keyed on where a file was
+produced, not on its content. The same agreement in a folder and attached to an email is two
+produced files and two rows — Table 05 carries a `Duplicate Indicators` column to say so.
+Keying on content silently dropped one of them, which the email fixture caught.
+
 ## 4. The standards are enforced, not requested
 
 A prompt instruction is a request. `engine/validate.py` turns `00a` into checks that run
@@ -174,9 +201,12 @@ where their answers live, and a run never overwrites a verified, corrected, or l
   confidence because it is rendered text, lightly greyed. Real recorded documents are skewed,
   stamped, annotated and photocopied; expect materially lower confidence and check what
   `OCR_LOW_CONFIDENCE` actually catches before trusting the threshold.
-- **Legacy and mail formats are unread.** `.xls`, `.doc`, `.rtf`, `.msg`, `.eml`, `.pptx`
-  and archives are reported, not parsed. Email in particular is common in a data room and
-  carries the correspondence that Tables 17, 23 and 25 are built around.
+- **`.msg` is unexercised on a real file.** Outlook's format is an OLE2 compound file that
+  cannot be written from Python without more machinery than a fixture deserves, so the `.eml`
+  path is tested end to end and `.msg` only as far as the dispatch. `extract-msg` does the
+  reading.
+- **Legacy formats are unread.** `.xls`, `.doc`, `.rtf`, `.pptx` and archives are reported,
+  not parsed.
 - **The vision OCR path is unexercised.** It is written against the Responses API image
   input but has never run, for the same reason the rest of the live path has not.
 - **Table 05's document-type vocabulary is ~180 values.** `00a` section 8 flags this as

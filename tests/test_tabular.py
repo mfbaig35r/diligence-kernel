@@ -155,13 +155,13 @@ def test_a_format_we_cannot_read_is_reported_not_skipped_silently(loaded, tmp_pa
     room = tmp_path / "room"
     room.mkdir()
     (room / "board-deck.pptx").write_bytes(b"stub")
-    (room / "counsel-email.msg").write_bytes(b"stub")
+    (room / "board-minutes.rtf").write_bytes(b"stub")
     (room / "old-schedule.xls").write_bytes(b"stub")
     counts, findings = ingest_path(loaded, room)
 
     assert counts["unsupported"] == 3
     reported = {f.subject_name for f in findings if f.code == "DOCUMENT_FORMAT_UNREADABLE"}
-    assert reported == {"board-deck.pptx", "counsel-email.msg", "old-schedule.xls"}
+    assert reported == {"board-deck.pptx", "board-minutes.rtf", "old-schedule.xls"}
     assert all(
         ".xlsx" in f.observation or "not supported" in f.observation
         for f in findings

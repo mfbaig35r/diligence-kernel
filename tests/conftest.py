@@ -21,10 +21,17 @@ DOCUMENTS = (
     "cedar-point-exhibit-a-scan.pdf",
     "cap-table-and-census.xlsx",
     "ucc-lien-schedule.csv",
+    "cedar-point-consent-thread.eml",
 )
-#: The one with no text layer. It ingests, but no cell can be filled from it.
+#: The email carries one attachment, which is ingested as a document of its own.
+ATTACHMENT_COUNT = 1
+#: Documents in the vault after ingestion: the files above, plus the attachment.
+INGESTED = len(DOCUMENTS) + ATTACHMENT_COUNT
+#: The one with no text layer. Without OCR it ingests, but no cell can be filled from it.
 UNREADABLE = "cedar-point-exhibit-a-scan.pdf"
 READABLE = tuple(d for d in DOCUMENTS if d != UNREADABLE)
+#: Documents a run can actually read, with OCR off.
+READABLE_COUNT = INGESTED - 1
 
 
 @pytest.fixture(autouse=True)

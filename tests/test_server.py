@@ -7,7 +7,7 @@ import pytest
 from diligence_kernel import server
 from diligence_kernel.engine import runner
 
-from .conftest import DOCUMENTS
+from .conftest import INGESTED
 from .stub import StubFiller
 from .test_pipeline import _classify
 
@@ -81,10 +81,10 @@ def test_column_prompt_returns_text_and_edges(wired):
 def test_ingest_search_and_review_round_trip(wired, dataroom, monkeypatch):
     server.matter_open("Project Cedar", as_of_date="2026-09-01")
     ing = server.vault_ingest(str(dataroom))
-    assert ing["ingested"] == len(DOCUMENTS)
+    assert ing["ingested"] == INGESTED
 
     status = server.matter_status()
-    assert status["documents"]["extracted"] == len(DOCUMENTS)
+    assert status["documents"]["extracted"] == INGESTED
     assert any(f["code"] == "DOCUMENTS_UNROUTED" for f in status["findings"])
 
     _classify(wired)

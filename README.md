@@ -69,9 +69,10 @@ covered. `table_describe` reports the pairs that must be built together.
 
 ## Real documents
 
-PDF, DOCX, XLSX, CSV and HTML are read by default — a data room is not a folder of text
-files. Anything produced but unreadable (`.xls`, `.msg`, `.pptx`, archives) is **reported**,
-not skipped in silence: an unread file must not look like an absent one. Three things happen on the way in that matter more than they sound:
+PDF, DOCX, XLSX, CSV, HTML and email (`.eml`, `.msg`) are read by default — a data room is
+not a folder of text files. Anything produced but unreadable (`.xls`, `.doc`, `.pptx`,
+archives) is **reported**, not skipped in silence: an unread file must not look like an
+absent one. Three things happen on the way in that matter more than they sound:
 
 - **Running headers and footers are stripped.** An extractor emits them in reading order, so
   a clause spanning a page break arrives with `Confidential Page 1 of 3` inside the sentence.
@@ -105,6 +106,24 @@ E1032        Employee 32  Engineer II  Austin, TX      2022-06-15  125200       
 
 The repetition is written into the stored text too, the way a printed schedule repeats its
 headings on each page, which keeps every chunk an exact slice and offsets true.
+
+### Email is correspondence, and it carries documents
+
+Tables 17, 23 and 25 are built around correspondence, and their review unit is a *matter* of
+several communications — so one message is one document, and unit assembly groups them.
+
+- **Headers are normalized** into the text, because From, Cc, Date and Subject are what
+  Table 05 routes on.
+- **The quoted chain is separated and labelled.** A reply carrying twelve earlier messages
+  otherwise duplicates their text into every later file, which distorts retrieval and makes
+  "the most recently dated document" meaningless. The history is kept — it is evidence — but
+  marked as repeated.
+- **Attachments are extracted and ingested in their own right**, linked back to the message
+  that carried them, because in a data room the attachment is usually the agreement.
+  Signature images, calendar items and `smime.p7s` are recognised as mail furniture.
+- **Privilege markings are reported.** `00a`: report the marking and stop, never assess
+  whether privilege applies — "a privileged document reaching the wrong reviewer is a
+  handling problem." Detection runs on every document, not only email.
 
 The Verbatim check tolerates what extraction does to text — ligatures, soft hyphens,
 hyphenated line breaks, wrapping, smart quotes, dashes, non-breaking spaces — while still
