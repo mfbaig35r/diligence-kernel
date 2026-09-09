@@ -86,6 +86,70 @@ def matter_open(
     )
 
 
+def matter_parameters_set(
+    conn: sqlite3.Connection, entities: list[dict[str, Any]], *, replace: bool = False
+) -> dict[str, Any]:
+    """Record the entities the Table Instructions name, so their placeholders can be bound."""
+    from . import binding
+
+    if replace:
+        conn.execute("DELETE FROM entity")
+    stored = 0
+    for record in entities:
+        name = (record.get("name") or "").strip()
+        if not name:
+            continue
+        conn.execute(
+            """INSERT INTO entity (name, jurisdiction, role, is_subject, created_at)
+               VALUES (?,?,?,?,?)
+               ON CONFLICT(name) DO UPDATE SET
+                 jurisdiction=excluded.jurisdiction, role=excluded.role,
+                 is_subject=excluded.is_subject""",
+            (
+                name,
+                record.get("jurisdiction"),
+                record.get("role"),
+                int(bool(record.get("is_subject", True))),
+                now(),
+            ),
+        )
+        stored += 1
+    conn.commit()
+
+    matter = conn.execute("SELECT * FROM matter WHERE id = 1").fetchone()
+    known = binding.entities_of(conn)
+    findings: list[Finding] = []
+    remaining: dict[str, list[str]] = {}
+    for row in conn.execute("SELECT number, table_instructions FROM review_table ORDER BY number"):
+        left = binding.unbound(
+            binding.bind(row["table_instructions"] or "", matter=matter, entities=known)
+        )
+        if left:
+            remaining[row["number"]] = left
+    if remaining:
+        every = sorted({p for v in remaining.values() for p in v})
+        findings.append(
+            Finding(
+                code="UNBOUND_PARAMETERS",
+                subject_type="matter",
+                subject_id=1,
+                subject_name=matter["name"] if matter else "matter",
+                observation=(
+                    f"{len(remaining)} tables still carry unbound placeholders: {', '.join(every)}. "
+                    "A prompt that reaches the model with these cannot answer questions about them."
+                ),
+                evidence={"tables": remaining},
+            )
+        )
+    return result(
+        findings,
+        entities=stored,
+        subjects=sum(1 for e in known if e.is_subject),
+        tables_fully_bound=len(conn.execute("SELECT id FROM review_table").fetchall())
+        - len(remaining),
+    )
+
+
 def matter_status(conn: sqlite3.Connection) -> dict[str, Any]:
     matter = conn.execute("SELECT * FROM matter WHERE id = 1").fetchone()
     if matter is None:

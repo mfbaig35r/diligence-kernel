@@ -37,6 +37,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
+from .. import binding
 from ..constants import SPAN_EXACT_TYPES
 from ..db import now
 from ..findings import Finding, KernelError
@@ -165,6 +166,31 @@ def execute_run(
     conn.commit()
 
     units, columns = _plan(conn, int(run["table_id"]), scope)
+
+    # Bind the matter's parameters into the Table Instructions before anything reads them.
+    # Unbound, they ask the model to identify a "review subject" against square brackets.
+    matter = conn.execute("SELECT * FROM matter WHERE id = 1").fetchone()
+    instructions = binding.bind(
+        table["table_instructions"] or "",
+        matter=matter,
+        entities=binding.entities_of(conn),
+    )
+    if still := binding.unbound(instructions):
+        findings.append(
+            Finding(
+                code="UNBOUND_PARAMETERS",
+                subject_type="table",
+                subject_id=int(run["table_id"]),
+                subject_name=f"Table {table['number']}",
+                observation=(
+                    f"{len(still)} parameters in the Table Instructions were not bound and "
+                    f"reach the model as placeholders: {', '.join(still)}. Answers that depend "
+                    "on them cannot be right."
+                ),
+                evidence={"placeholders": still},
+            )
+        )
+
     workers = configured_concurrency()
     conn.execute("UPDATE run SET concurrency = ? WHERE id = ?", (workers, run_id))
     conn.commit()
@@ -204,7 +230,7 @@ def execute_run(
                 continue
 
             system = filler.build_system(
-                table_instructions=table["table_instructions"] or "",
+                table_instructions=instructions,
                 unit_label=unit["label"],
                 evidence_blocks=blocks,
                 cache_key=f"{table['number']}:{unit_id}",
@@ -230,6 +256,7 @@ def execute_run(
                         whole,
                         scope,
                         findings,
+                        instructions,
                     )
                     if item is None:
                         done += 1
@@ -363,6 +390,10 @@ def preview_run(
         raise KernelError(f"Table {table_number} is not loaded in this matter.")
     filler = filler or CellFiller()
     units, columns = _plan(conn, int(table["id"]), scope)
+    matter = conn.execute("SELECT * FROM matter WHERE id = 1").fetchone()
+    instructions = binding.bind(
+        table["table_instructions"] or "", matter=matter, entities=binding.entities_of(conn)
+    )
 
     out: list[dict[str, Any]] = []
     for unit in units:
@@ -371,7 +402,7 @@ def preview_run(
         if not blocks:
             continue
         system = filler.build_system(
-            table_instructions=table["table_instructions"] or "",
+            table_instructions=instructions,
             unit_label=unit["label"],
             evidence_blocks=blocks,
             cache_key=f"{table['number']}:{unit_id}",
@@ -590,6 +621,7 @@ def _prepare(
     whole: bool,
     scope: RunScope,
     findings: list[Finding],
+    instructions: str,
 ) -> _Prepared | None:
     """Assemble one cell's work on the calling thread, or None if it should be skipped.
 
@@ -633,7 +665,7 @@ def _prepare(
             for p in passages
         ]
         per_column_system = filler.build_system(
-            table_instructions=table["table_instructions"] or "",
+            table_instructions=instructions,
             unit_label=unit["label"],
             evidence_blocks=retrieved,
             cache_key=f"{table['number']}:{unit_id}:{column['name']}",

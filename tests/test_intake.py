@@ -14,7 +14,7 @@ from .stub import StubFiller
 # returns the same values for every row, so the per-file assertions below use the columns
 # that do not vary.
 INTAKE_SCRIPT = {
-    "Workstream": ("Contracts", []),
+    "Workstream": ("Commercial Contracts", []),
     "Document Type": ("Master services agreement", []),
     "Document Role": ("Operative instrument", []),
     "Subject Entity": ("Acme Manufacturing LLC", []),
@@ -61,7 +61,7 @@ def test_running_intake_populates_the_classification_routing_table(loaded, datar
             "SELECT workstream, document_type, routing_disposition FROM classification"
         ).fetchall()
         assert len(rows) == READABLE_COUNT
-        assert {r["workstream"] for r in rows} == {"Contracts"}
+        assert {r["workstream"] for r in rows} == {"Commercial Contracts"}
 
         # Routing now works: the contracts tables can see the files.
         assert len(documents_in_scope(loaded, "01")) == READABLE_COUNT

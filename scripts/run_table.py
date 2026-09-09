@@ -47,7 +47,40 @@ def main() -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = db.connect(path)
 
-    service.matter_open(conn, "Fixture data room", as_of_date="2026-09-08")
+    service.matter_open(conn, "Project Cedar", side="buy", as_of_date="2026-09-08")
+    # Bind the matter's parameters, or the Table Instructions reach the model as templates.
+    params = service.matter_parameters_set(
+        conn,
+        [
+            {
+                "name": "Acme Manufacturing LLC",
+                "jurisdiction": "Delaware limited liability company",
+                "role": "target operating company",
+                "is_subject": True,
+            },
+            {
+                "name": "Cedar Point Holdings Inc.",
+                "jurisdiction": "Delaware corporation",
+                "role": "parent",
+                "is_subject": False,
+            },
+            {
+                "name": "Northwind Acquisition Corp.",
+                "jurisdiction": "Delaware corporation",
+                "role": "buyer",
+                "is_subject": False,
+            },
+            {"name": "Halstead & Roe LLP", "role": "adviser", "is_subject": False},
+        ],
+        replace=True,
+    )
+    print(
+        f"parameters: {params['entities']} entities, "
+        f"{params['tables_fully_bound']} tables fully bound",
+        flush=True,
+    )
+    for f in params["findings"]:
+        print(f"  ! {f['code']}: {f['observation'][:110]}", flush=True)
     if args.room:
         counts, findings = ingest_path(conn, Path(args.room).expanduser())
         print(f"ingest: { ({k: v for k, v in counts.items() if v}) }", flush=True)

@@ -16,7 +16,7 @@ from .stub import StubFiller
 # here so the test exercises routing and assembly, not the model.
 CLASSIFICATIONS = {
     "msa-base.txt": {
-        "workstream": "Contracts",
+        "workstream": "Commercial Contracts",
         "document_type": "Master services agreement",
         "subject_entity": "Acme Manufacturing LLC",
         "counterparty": "Northwind Logistics Inc.",
@@ -26,7 +26,7 @@ CLASSIFICATIONS = {
         "routing_disposition": "Route to Contracts",
     },
     "msa-amendment-1.txt": {
-        "workstream": "Contracts",
+        "workstream": "Commercial Contracts",
         "document_type": "Amendment",
         "subject_entity": "Acme Manufacturing LLC",
         "counterparty": "Northwind Logistics Inc.",
@@ -36,7 +36,7 @@ CLASSIFICATIONS = {
         "routing_disposition": "Route to Contracts",
     },
     "supply-agreement.txt": {
-        "workstream": "Contracts",
+        "workstream": "Commercial Contracts",
         "document_type": "Supply agreement",
         "subject_entity": "Acme Manufacturing LLC",
         "counterparty": "Cedar Components GmbH",

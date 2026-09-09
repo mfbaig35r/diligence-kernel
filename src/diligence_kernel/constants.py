@@ -134,21 +134,42 @@ ARITHMETIC_MARKERS: tuple[str, ...] = (
 
 # --- 00a section 3: vault project structure ---------------------------------------------
 
-#: Workstream -> the tables that run over its project. Keys match Table 05's `Workstream`
-#: classify options; table numbers are the identifiers 00a section 2 defines.
+#: Workstream -> the tables that run over it.
+#:
+#: **The keys are Table 05's own configured options, verbatim.** They were once hand-written
+#: paraphrases (`Contracts`, `Finance`), which matched 4 of the corpus's 19 values — so a
+#: document classified `Debt and Financing` routed to nothing and vanished from every table
+#: while looking correctly classified. `WORKSTREAMS_WITHOUT_TABLES` records the values that
+#: legitimately route nowhere, so an empty result is a stated fact rather than a silent miss.
 WORKSTREAM_TABLES: dict[str, tuple[str, ...]] = {
-    "Intake": ("05",),
-    "Corporate": ("02", "03", "04"),
-    "Contracts": ("01", "07"),
-    "Employment": ("08", "09"),
-    "IP": ("10", "11", "12"),
+    "Corporate and Entity Structure": ("02",),
+    "Capitalization and Securities": ("03", "04"),
+    "Commercial Contracts": ("01", "07"),
+    # 00a section 2: served by Contracts Core filtered on Counterparty Type, not its own table.
+    "Vendor and Supplier": ("01", "07"),
+    "IP and Technology": ("10", "11", "12"),
+    "Employment and HR": ("08", "09"),
     "Real Estate": ("13", "14"),
-    "Litigation": ("15",),
-    "Regulatory": ("16", "17"),
-    "Finance": ("18", "19", "20"),
     "Environmental": ("21", "22", "23"),
+    "Litigation and Disputes": ("15",),
+    "Regulatory and Licenses": ("16", "17"),
     "Tax": ("24", "25"),
-    "Deal Documents": (),
+    "Insurance": ("20",),
+    "Debt and Financing": ("18", "19"),
+}
+
+#: Workstreams Table 05 can return that no table in this corpus covers, and why. Routing to
+#: nothing is correct for these; being unable to say so is not.
+WORKSTREAMS_WITHOUT_TABLES: dict[str, str] = {
+    "Privacy and Cybersecurity": (
+        "00a section 2 lists this as an open scope question: no table is drafted for it, "
+        "and for a modern target it is the most defensible addition"
+    ),
+    "Benefits and Pensions": "00a section 2 lists this as an open scope question; no table is drafted",
+    "Compliance": "00a section 2 lists this as an open scope question; no table is drafted",
+    "Related-Party": "no table in this corpus covers related-party material",
+    "Deal Documents": "00a section 2: LOIs, draft SPAs and structure charts are read directly",
+    "Unable to determine": "the classifier could not place the document",
 }
 
 #: 00a section 12. Pairs that must be built together because the first returns

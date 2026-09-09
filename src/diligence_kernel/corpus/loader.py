@@ -17,6 +17,7 @@ import json
 import sqlite3
 from pathlib import Path
 
+from ..constants import WORKSTREAM_TABLES, WORKSTREAMS_WITHOUT_TABLES
 from ..db import now
 from ..findings import Finding
 from .parser import ColumnSpec, TableSpec, parse_corpus, resolve_at_refs
@@ -91,8 +92,61 @@ def load_corpus(
         counts["tables"] += 1
         counts["columns"] += len(spec.columns)
 
+    findings.extend(_check_workstream_vocabulary(conn))
     conn.commit()
     return counts, findings
+
+
+def _check_workstream_vocabulary(conn: sqlite3.Connection) -> list[Finding]:
+    """Confirm every workstream Table 05 can return is accounted for.
+
+    Routing matches a classification against `WORKSTREAM_TABLES`. If the corpus offers an
+    option that map does not know, documents classified into it route to nothing and
+    disappear from every table while looking correctly classified. This catches that at load
+    time rather than letting it be discovered in a run's results.
+    """
+    row = conn.execute(
+        """SELECT cd.configured_options FROM column_def cd
+           JOIN review_table t ON t.id = cd.table_id
+           WHERE t.number = '05' AND cd.name = 'Workstream'"""
+    ).fetchone()
+    if row is None or not row["configured_options"]:
+        return []
+    options = json.loads(row["configured_options"])
+    known = set(WORKSTREAM_TABLES) | set(WORKSTREAMS_WITHOUT_TABLES)
+    unknown = [o for o in options if o not in known]
+    stale = [k for k in WORKSTREAM_TABLES if k not in options]
+
+    findings: list[Finding] = []
+    if unknown:
+        findings.append(
+            Finding(
+                code="WORKSTREAM_NOT_ROUTED",
+                subject_type="corpus",
+                subject_id=None,
+                subject_name="Table 05 Workstream",
+                observation=(
+                    f"{len(unknown)} workstream options have no routing entry, so a document "
+                    f"classified into one would reach no table: {', '.join(unknown)}."
+                ),
+                evidence={"options": unknown},
+            )
+        )
+    if stale:
+        findings.append(
+            Finding(
+                code="WORKSTREAM_ROUTE_STALE",
+                subject_type="corpus",
+                subject_id=None,
+                subject_name="Table 05 Workstream",
+                observation=(
+                    f"{len(stale)} routing entries name a workstream the corpus no longer offers: "
+                    f"{', '.join(stale)}."
+                ),
+                evidence={"entries": stale},
+            )
+        )
+    return findings
 
 
 def _insert_table(conn: sqlite3.Connection, spec: TableSpec, digest: str) -> int:

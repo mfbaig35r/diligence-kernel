@@ -7,6 +7,7 @@ import pytest
 
 from diligence_kernel import db
 from diligence_kernel.corpus.loader import load_corpus
+from diligence_kernel.db import now
 
 CORPUS = Path(__file__).resolve().parents[1] / "review-table-prompts"
 DATAROOM = Path(__file__).parent / "fixtures" / "dataroom"
@@ -55,7 +56,29 @@ def conn(tmp_path) -> sqlite3.Connection:
 
 @pytest.fixture
 def loaded(conn) -> sqlite3.Connection:
+    """The corpus loaded, plus a matter and its entities.
+
+    Parameters are bound in a real run, so tests run bound too — otherwise every one of them
+    would carry an UNBOUND_PARAMETERS finding and stop saying anything about what it tests.
+    """
     load_corpus(conn, CORPUS)
+    conn.execute(
+        "INSERT INTO matter (id, name, side, as_of_date, created_at) "
+        "VALUES (1, 'Fixture matter', 'buy', '2026-09-08', ?)",
+        (now(),),
+    )
+    for name, juris, role, subject in (
+        ("Acme Manufacturing LLC", "Delaware limited liability company", "target", 1),
+        ("Northwind Acquisition Corp.", "Delaware corporation", "buyer", 0),
+        ("Cedar Point Holdings Inc.", "Delaware corporation", "seller", 0),
+        ("Halstead & Roe LLP", None, "adviser", 0),
+    ):
+        conn.execute(
+            "INSERT INTO entity (name, jurisdiction, role, is_subject, created_at) "
+            "VALUES (?,?,?,?,?)",
+            (name, juris, role, subject, now()),
+        )
+    conn.commit()
     return conn
 
 

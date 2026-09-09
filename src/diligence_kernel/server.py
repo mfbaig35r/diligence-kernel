@@ -103,6 +103,31 @@ def matter_open(
 
 @mcp.tool()
 @_tool
+def matter_parameters_set(
+    entities: Annotated[
+        list[dict[str, Any]],
+        Field(
+            description="One record per named entity: {name, jurisdiction, role, is_subject}. "
+            "is_subject true for target-group entities, false for the buyer, seller and "
+            "advisers. Roles 'buyer', 'seller'/'parent' and 'adviser' bind their own "
+            "placeholders."
+        ),
+    ],
+    replace: Annotated[bool, Field(description="Discard the existing entity list first.")] = False,
+) -> dict[str, Any]:
+    """Record the entities named in the Table Instructions, so their placeholders bind.
+
+    The corpus ships templates: `[Project name]`, `[Exact legal name] ([jurisdiction and
+    entity type]; [role in the group])`, `[Buyer legal name]`. Left unbound, a prompt asks
+    the model to decide whether a document's party is a review subject against a list of
+    square brackets — and `Unable to determine` becomes the correct answer to the wrong
+    question. Call this before any run, and it reports any placeholder still unbound.
+    """
+    return service.matter_parameters_set(get_conn(), entities, replace=replace)
+
+
+@mcp.tool()
+@_tool
 def matter_status() -> dict[str, Any]:
     """Report what the matter holds: documents, classification, units, and cells filled per table.
 
