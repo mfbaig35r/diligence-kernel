@@ -21,14 +21,35 @@ drifting in transcription, for no gain.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import tempfile
 from collections import Counter
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-PROMPT_GRAPH = Path("/Users/fbaig/Projects/prompt-graph")
 sys.path.insert(0, str(REPO / "src"))
+
+
+def prompt_graph_src() -> Path | None:
+    """Where prompt-graph's source lives, when it is not already importable.
+
+    Checked in order: $PROMPT_GRAPH_REPO, a sibling checkout, then the path this script was
+    first written against. Returns None when the package imports anyway, which is the case
+    whenever this runs inside prompt-graph's own virtualenv.
+    """
+    if "prompt_graph" in sys.modules:
+        return None
+    candidates: list[Path] = []
+    env = os.environ.get("PROMPT_GRAPH_REPO")
+    if env:
+        candidates.append(Path(env).expanduser())
+    candidates.append(REPO.parent / "prompt-graph")
+    candidates.append(Path("/Users/fbaig/Projects/prompt-graph"))
+    for c in candidates:
+        if (c / "src" / "prompt_graph" / "__init__.py").exists():
+            return c / "src"
+    return None
 
 
 def main() -> int:
@@ -63,10 +84,20 @@ def main() -> int:
         print(f"\ndry run: {len(payloads)} tables, {chars:,} prompt characters. Nothing written.")
         return 0
 
-    sys.path.insert(0, str(PROMPT_GRAPH / "src"))
-    from prompt_graph import db as pg_db
-    from prompt_graph import service
-    from prompt_graph.models import ColumnRecord, TableMeta
+    src = prompt_graph_src()
+    if src is not None:
+        sys.path.insert(0, str(src))
+    try:
+        from prompt_graph import db as pg_db
+        from prompt_graph import service
+        from prompt_graph.models import ColumnRecord, TableMeta
+    except ImportError:
+        print(
+            "prompt-graph is not importable. Either run this with prompt-graph's venv, or set\n"
+            "PROMPT_GRAPH_REPO to a checkout of it, or clone it beside this repo.",
+            file=sys.stderr,
+        )
+        return 1
 
     pg = pg_db.connect()
     print(f"\nprompt-graph db: {pg_db.db_path()}")
